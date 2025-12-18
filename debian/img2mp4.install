@@ -1,0 +1,6 @@
+img2mp4 usr/bin/
+img2mp4.sh usr/bin/
+README.md usr/share/doc/img2mp4/
+img2mp4.bash-completion etc/bash_completion.d/
+img2mp4.1 usr/share/man/man1/
+

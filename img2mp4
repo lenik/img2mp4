@@ -1,0 +1,761 @@
+#!/usr/bin/env python3
+"""
+img2mp4 - Convert image series to video with timecode as subtitle
+"""
+
+import argparse
+import os
+import sys
+import subprocess
+import tempfile
+import time
+from pathlib import Path
+from datetime import datetime
+from PIL import Image
+from PIL.ExifTags import TAGS
+
+# ANSI color codes
+ANSI_RESET = '\033[0m'
+ANSI_GRAY = '\033[90m'
+ANSI_LIGHTGRAY = '\033[37m'
+ANSI_ORANGE = '\033[38;5;208m'
+ANSI_RED = '\033[31m'
+ANSI_RED_BOLD = '\033[1;31m'
+ANSI_BLINK = '\033[5m'
+
+# Logging state (set by main)
+# Loglevels: warn=-1, error=-2, fatal=-3, log1=0, log2=1, log3=2, log4=3
+_log_level = 0
+
+def _log0(*args, **kwargs):
+    """Reserved for future use."""
+    pass
+
+def _log1(*args, **kwargs):
+    """Default enabled (loglevel 0), but disabled if loglevel < 0."""
+    if _log_level <= 0:
+        print(*args, **kwargs)
+
+def _log2(*args, **kwargs):
+    """Enabled if -v (loglevel 1), in gray color."""
+    if _log_level <= 1:
+        output_file = kwargs.pop('file', sys.stdout)
+        print(ANSI_GRAY, end='', file=output_file)
+        print(*args, **kwargs, file=output_file)
+        print(ANSI_RESET, end='', file=output_file)
+
+def _log3(*args, **kwargs):
+    """Enabled if -vv (loglevel 2), in lightgray color."""
+    if _log_level <= 2:
+        output_file = kwargs.pop('file', sys.stdout)
+        print(ANSI_LIGHTGRAY, end='', file=output_file)
+        print(*args, **kwargs, file=output_file)
+        print(ANSI_RESET, end='', file=output_file)
+
+def _log4(*args, **kwargs):
+    """Enabled if -vvv (loglevel 3), in lightgray color."""
+    if _log_level <= 3:
+        output_file = kwargs.pop('file', sys.stdout)
+        print(ANSI_LIGHTGRAY, end='', file=output_file)
+        print(*args, **kwargs, file=output_file)
+        print(ANSI_RESET, end='', file=output_file)
+
+def _dbg(*args, **kwargs):
+    """Debug logging (same as _log4)."""
+    return _log4(*args, **kwargs)
+
+def _warn(*args, **kwargs):
+    """Warning message (loglevel -1) in orange color, returns False."""
+    if _log_level <= -1:
+        output_file = kwargs.pop('file', sys.stderr)
+        print(ANSI_ORANGE, end='', file=output_file)
+        print(*args, **kwargs, file=output_file)
+        print(ANSI_RESET, end='', file=output_file)
+    return False
+
+def _error(*args, **kwargs):
+    """Error message (loglevel -2) in red bold color, returns False."""
+    if _log_level <= -2:
+        output_file = kwargs.pop('file', sys.stderr)
+        print(ANSI_RED_BOLD, end='', file=output_file)
+        print(*args, **kwargs, file=output_file)
+        print(ANSI_RESET, end='', file=output_file)
+    return False
+
+def _fatal(*args, **kwargs):
+    """Fatal error (loglevel -3) in red bold color with blink, returns False."""
+    if _log_level <= -3:
+        output_file = kwargs.pop('file', sys.stderr)
+        print(ANSI_RED_BOLD + ANSI_BLINK, end='', file=output_file)
+        print(*args, **kwargs, file=output_file)
+        print(ANSI_RESET, end='', file=output_file)
+    return False
+
+# EXIF field mappings
+EXIF_FIELDS = {
+    '9003': 'DateTimeOriginal',
+    '9004': 'DateTimeDigitized',
+    '0132': 'DateTime',
+    'original': 'DateTimeOriginal',
+    'taken': 'DateTimeOriginal',
+    'datetimeoriginal': 'DateTimeOriginal',
+    'digitized': 'DateTimeDigitized',
+    'datetimedigitized': 'DateTimeDigitized',
+    'modify': 'DateTime',
+    'modified': 'DateTime',
+    'filemodifydate': 'DateTime',
+    'date': 'DateTime',
+}
+
+def get_exif_datetime(image_path, exif_field='DateTimeOriginal', include_subsec=True):
+    """Extract datetime from EXIF data."""
+    try:
+        img = Image.open(image_path)
+        exif = img.getexif()
+        
+        if not exif:
+            return None
+        
+        # Find the tag ID for the requested field
+        tag_id = None
+        for tag, name in TAGS.items():
+            if name == exif_field:
+                tag_id = tag
+                break
+        
+        if tag_id is None or tag_id not in exif:
+            return None
+        
+        dt_str = exif[tag_id]
+        
+        # Try to get subseconds if available
+        subsec = ''
+        if include_subsec:
+            # Map EXIF field to corresponding SubSecTime field
+            subsec_field_map = {
+                'DateTime': 'SubSecTime',
+                'DateTimeOriginal': 'SubSecTimeOriginal',
+                'DateTimeDigitized': 'SubSecTimeDigitized'
+            }
+            subsec_field = subsec_field_map.get(exif_field, None)
+            
+            if subsec_field:
+                subsec_tag_id = None
+                for tag, name in TAGS.items():
+                    if name == subsec_field:
+                        subsec_tag_id = tag
+                        break
+                
+                if subsec_tag_id and subsec_tag_id in exif:
+                    subsec = '.' + str(exif[subsec_tag_id]).zfill(3)
+        
+        # Parse datetime string (format: "YYYY:MM:DD HH:MM:SS")
+        try:
+            dt = datetime.strptime(dt_str, "%Y:%m:%d %H:%M:%S")
+            if include_subsec and subsec:
+                dt_str = dt_str + subsec
+            return dt_str
+        except ValueError:
+            return None
+    except Exception:
+        return None
+
+def get_file_datetime(image_path, include_subsec=True):
+    """Get file modification time."""
+    try:
+        mtime = os.path.getmtime(image_path)
+        dt = datetime.fromtimestamp(mtime)
+        if include_subsec:
+            return dt.strftime("%Y:%m:%d %H:%M:%S.%f")[:-3]  # Keep milliseconds
+        else:
+            return dt.strftime("%Y:%m:%d %H:%M:%S")
+    except Exception:
+        return None
+
+def parse_datetime(dt_str):
+    """Parse datetime string and return components."""
+    # Handle format: "YYYY:MM:DD HH:MM:SS[.SSS]"
+    parts = dt_str.split()
+    if len(parts) != 2:
+        return None
+    
+    date_part = parts[0]
+    time_part = parts[1]
+    
+    # Check for subseconds
+    if '.' in time_part:
+        time_part, subsec = time_part.split('.')
+        subsec = subsec[:3]  # Keep only milliseconds
+    else:
+        subsec = None
+    
+    try:
+        dt = datetime.strptime(f"{date_part} {time_part}", "%Y:%m:%d %H:%M:%S")
+        return {
+            'date': dt.strftime("%Y-%m-%d"),
+            'time': time_part + (f".{subsec}" if subsec else ""),
+            'full': dt_str,
+            'datetime': dt,
+            'subsec': subsec
+        }
+    except ValueError:
+        return None
+
+def generate_subtitle_style(theme):
+    """Generate ASS subtitle style based on theme."""
+    if theme == 'split':
+        return """[Script Info]
+Title: img2mp4 Subtitles
+ScriptType: v4.00+
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: TopLeft, Fira Code, 16, &H00FFFFFF, &H000000FF, &H00000000, &H80000000, 0, 0, 0, 0, 100, 100, 0, 0, 1, 1, 0, 7, 10, 10, 10, 1
+Style: BottomRight, Fira Code, 16, &H00FFFFFF, &H000000FF, &H00000000, &H80000000, 0, 0, 0, 0, 100, 100, 0, 0, 1, 1, 0, 3, 10, 10, 10, 1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+"""
+    elif theme == 'simple':
+        return """[Script Info]
+Title: img2mp4 Subtitles
+ScriptType: v4.00+
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: BottomRight, Fira Code, 16, &H00FFFFFF, &H000000FF, &H00000000, &H80000000, 0, 0, 0, 0, 100, 100, 0, 0, 1, 1, 0, 3, 10, 10, 10, 1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+"""
+    elif theme == 'large':
+        return """[Script Info]
+Title: img2mp4 Subtitles
+ScriptType: v4.00+
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: BottomCenter, Arial, 24, &H00FFFFFF, &H000000FF, &H00000000, &H80000000, 0, 0, 0, 0, 100, 100, 0, 0, 1, 2, 0, 2, 10, 10, 10, 1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+"""
+    return ""
+
+def format_datetime_for_theme(parsed_dt, theme, timezone_offset="+0000"):
+    """Format datetime according to theme."""
+    if not parsed_dt:
+        return "", ""
+    
+    dt = parsed_dt['datetime']
+    date_str = parsed_dt['date']
+    time_str = parsed_dt['time']
+    
+    if theme == 'split':
+        # Top left: date only
+        # Bottom right: time with timezone
+        top_left = date_str
+        bottom_right = f"{time_str} {timezone_offset}"
+        return top_left, bottom_right
+    elif theme == 'simple':
+        # Bottom right: full datetime
+        full_str = f"{date_str} {time_str} {timezone_offset}"
+        return "", full_str
+    elif theme == 'large':
+        # Bottom center: full formatted datetime
+        # Format: "Thu Dec 18 03:21:53.123 PM CST 2025"
+        weekday = dt.strftime("%a")
+        month = dt.strftime("%b")
+        day = dt.strftime("%d").lstrip('0') or '0'
+        time_12h = dt.strftime("%I:%M:%S")
+        if parsed_dt['subsec']:
+            time_12h += f".{parsed_dt['subsec']}"
+        ampm = dt.strftime("%p")
+        year = dt.strftime("%Y")
+        # Note: CST is hardcoded as example, in real implementation might want to detect timezone
+        full_str = f"{weekday} {month} {day} {time_12h} {ampm} CST {year}"
+        return "", full_str
+    
+    return "", ""
+
+def create_subtitle_file(image_paths, datetimes, fps, theme='split', timezone_offset="+0000"):
+    """Create ASS subtitle file."""
+    subtitle_lines = []
+    
+    frame_duration = 1.0 / fps
+    
+    for i, (img_path, dt_str) in enumerate(zip(image_paths, datetimes)):
+        parsed_dt = parse_datetime(dt_str) if dt_str else None
+        top_text, bottom_text = format_datetime_for_theme(parsed_dt, theme, timezone_offset)
+        
+        start_time = i * frame_duration
+        end_time = (i + 1) * frame_duration
+        
+        def ass_time(seconds):
+            hours = int(seconds // 3600)
+            minutes = int((seconds % 3600) // 60)
+            secs = seconds % 60
+            return f"{hours}:{minutes:02d}:{secs:05.2f}"
+        
+        start_ass = ass_time(start_time)
+        end_ass = ass_time(end_time)
+        
+        if theme == 'split':
+            if top_text:
+                subtitle_lines.append(f"Dialogue: 0,{start_ass},{end_ass},TopLeft,,0,0,0,,{top_text}")
+            if bottom_text:
+                subtitle_lines.append(f"Dialogue: 0,{start_ass},{end_ass},BottomRight,,0,0,0,,{bottom_text}")
+        elif theme == 'simple':
+            if bottom_text:
+                subtitle_lines.append(f"Dialogue: 0,{start_ass},{end_ass},BottomRight,,0,0,0,,{bottom_text}")
+        elif theme == 'large':
+            if bottom_text:
+                subtitle_lines.append(f"Dialogue: 0,{start_ass},{end_ass},BottomCenter,,0,0,0,,{bottom_text}")
+    
+    return "\n".join(subtitle_lines)
+
+def parse_resize(size_str):
+    """Parse resize specification like '1080', '1080p', '1080i', '1920x1080', '1920*1080', '4kp'."""
+    size_str = size_str.lower().strip()
+    
+    # Default height
+    width = None
+    height = 1080
+    interlace = False
+    
+    # Check for type suffix (p or i)
+    if size_str.endswith('p'):
+        size_str = size_str[:-1]
+        interlace = False
+    elif size_str.endswith('i'):
+        size_str = size_str[:-1]
+        interlace = True
+    
+    # Parse dimensions - support both 'x' and '*' as separators
+    if 'x' in size_str or '*' in size_str:
+        # Use 'x' or '*' as separator
+        separator = 'x' if 'x' in size_str else '*'
+        parts = size_str.split(separator)
+        width = int(parts[0])
+        height = int(parts[1])
+    else:
+        # Single number - treat as height
+        height = int(size_str)
+        # Calculate width maintaining 16:9 aspect ratio
+        width = int(height * 16 / 9)
+    
+    return width, height, interlace
+
+def get_codec_from_extension(ext):
+    """Determine codec from file extension (defaults to H.265)."""
+    ext = ext.lower()
+    if ext == '.webm':
+        return 'libvpx-vp9'
+    else:
+        # Default to H.265 for mp4, mkv, mov, etc.
+        return 'libx265'
+
+def extract_exif_metadata(image_path):
+    """Extract EXIF metadata from image for copying to video."""
+    metadata = {}
+    try:
+        img = Image.open(image_path)
+        exif = img.getexif()
+        
+        if not exif:
+            return metadata
+        
+        # Map common EXIF tags to video metadata
+        exif_to_metadata = {
+            'DateTimeOriginal': 'creation_time',
+            'DateTime': 'date',
+            'DateTimeDigitized': 'date',
+            'Make': 'com.android.capture.firmware',
+            'Model': 'com.android.capture.device',
+            'Software': 'encoder',
+            'Artist': 'artist',
+            'Copyright': 'copyright',
+            'ImageDescription': 'description',
+            'GPSInfo': 'location',
+        }
+        
+        # Extract common metadata fields
+        for tag_id, value in exif.items():
+            tag_name = TAGS.get(tag_id, tag_id)
+            
+            # Convert value to string if needed
+            if isinstance(value, (int, float)):
+                value = str(value)
+            elif isinstance(value, bytes):
+                try:
+                    value = value.decode('utf-8', errors='ignore')
+                except:
+                    continue
+            
+            # Map to video metadata field
+            if tag_name in exif_to_metadata:
+                metadata_key = exif_to_metadata[tag_name]
+                # Special handling for datetime fields
+                if tag_name in ['DateTimeOriginal', 'DateTime', 'DateTimeDigitized']:
+                    # Format datetime for video (YYYY-MM-DDTHH:MM:SS)
+                    try:
+                        dt = datetime.strptime(value, "%Y:%m:%d %H:%M:%S")
+                        metadata[metadata_key] = dt.strftime("%Y-%m-%dT%H:%M:%S")
+                    except:
+                        # Fallback: try to convert format
+                        metadata[metadata_key] = value.replace(':', '-', 2).replace(' ', 'T', 1)
+                else:
+                    metadata[metadata_key] = value
+        
+        # Also try to get GPS info if available
+        if 34853 in exif:  # GPSInfo tag
+            try:
+                gps_info = exif[34853]
+                # GPS info is complex, just store a reference
+                metadata['location'] = 'GPS'
+            except:
+                pass
+        
+    except Exception as e:
+        _log3(f"Could not extract EXIF metadata: {e}")
+    
+    return metadata
+
+def get_system_timezone():
+    """Get system timezone offset as string like +0800."""
+    try:
+        # Get local timezone offset
+        now = datetime.now()
+        # Get timezone-aware datetime
+        if now.tzinfo is None:
+            # Try to get local timezone
+            import time
+            local_offset = time.timezone if time.daylight == 0 else time.altzone
+            # time.timezone is negative for timezones ahead of UTC
+            total_seconds = -local_offset
+        else:
+            offset = now.utcoffset()
+            if offset:
+                total_seconds = int(offset.total_seconds())
+            else:
+                return '+0000'
+        
+        hours = total_seconds // 3600
+        minutes = (total_seconds % 3600) // 60
+        sign = '+' if hours >= 0 else '-'
+        return f"{sign}{abs(hours):02d}{minutes:02d}"
+    except Exception:
+        pass
+    return '+0000'
+
+def expand_combined_short_options(argv):
+    """Expand combined short options like -v5 to -v -5."""
+    expanded = []
+    i = 0
+    while i < len(argv):
+        arg = argv[i]
+        # Check if it's a short option that can be combined (not --long-option)
+        if arg.startswith('-') and len(arg) > 2 and arg[1] != '-':
+            # Options that are flags (can be combined): -4, -5, -F, -S, -v
+            # Options that take values (cannot be combined): -g, -r, -o, -b, -e, -t
+            # Handle combinations like -v5, -v4, -45, etc.
+            # Note: -vv and -vvv are handled by argparse's action='count', so we don't expand them
+            if arg.startswith('-v') and len(arg) > 2:
+                # Check if it's -vv, -vvv, etc. (multiple v's for verbose)
+                # argparse with action='count' handles these automatically
+                if all(c == 'v' for c in arg[2:]):
+                    # Keep -vv, -vvv as-is for argparse action='count'
+                    expanded.append(arg)
+                elif arg[2] in ['4', '5']:
+                    # Split -v5 into -v and -5, or -v4 into -v and -4
+                    expanded.append('-v')
+                    expanded.append('-' + arg[2:])
+                else:
+                    # It's something else, keep together
+                    expanded.append(arg)
+            elif len(arg) == 3 and arg[1] in ['4', '5', 'F', 'S', 'v'] and arg[2] in ['4', '5']:
+                # Handle -45, -54, -v4, -v5, etc.
+                expanded.append('-' + arg[1])
+                expanded.append('-' + arg[2])
+            else:
+                expanded.append(arg)
+        else:
+            expanded.append(arg)
+        i += 1
+    return expanded
+
+def main():
+    # Expand combined short options before parsing
+    sys.argv = expand_combined_short_options(sys.argv)
+    
+    parser = argparse.ArgumentParser(
+        description='Convert image series to video with timecode as subtitle',
+        formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    
+    parser.add_argument('images', nargs='+', help='Input image files')
+    parser.add_argument('-g', '--resize', help='Resize images (default: 1080)')
+    parser.add_argument('-r', '--fps', type=float, default=29.97, help='Frame rate (default: 29.97)')
+    parser.add_argument('-o', '--output', help='Output file')
+    parser.add_argument('--crf', type=int, help='Constant rate factor')
+    parser.add_argument('-b', '--bandwidth', help='Bandwidth in bps (e.g., 4M)')
+    parser.add_argument('-4', '--h264', action='store_true', help='Use H.264 codec')
+    parser.add_argument('-5', '--h265', action='store_true', help='Use H.265 codec')
+    parser.add_argument('-t', '--theme', default='split', choices=['split', 'simple', 'large'],
+                       help='Subtitle theme (default: split)')
+    parser.add_argument('-F', '--filetime', action='store_true',
+                       help='Use file modification time instead of EXIF')
+    parser.add_argument('-e', '--exif', default='DateTimeOriginal',
+                       help='EXIF field to use (default: DateTimeOriginal)')
+    parser.add_argument('-S', '--nosubsec', action='store_true',
+                       help='Ignore subsecond fields')
+    parser.add_argument('--timezone', default=None, help='Timezone offset (default: from system)')
+    parser.add_argument('-q', '--quiet', action='count', default=0, help='Quiet mode (decrease loglevel, can be specified multiple times)')
+    parser.add_argument('-v', '--verbose', action='count', default=0, help='Verbose output (use -vv, -vvv for more)')
+    
+    args = parser.parse_args()
+    
+    # Set global logging state
+    # Base loglevel is 0 (_log1). Each -q decreases by 1, each -v increases by 1
+    # warn=-1, error=-2, fatal=-3, log1=0, log2=1, log3=2, log4=3
+    global _log_level
+    _log_level = args.quiet - args.verbose
+    
+    # Get timezone if not specified
+    if args.timezone is None:
+        args.timezone = get_system_timezone()
+    
+    # Validate input images
+    image_paths = []
+    for img_path in args.images:
+        if not os.path.exists(img_path):
+            _error(f"Image not found: {img_path}")
+            sys.exit(1)
+        image_paths.append(img_path)
+    
+    # Sort images by filename
+    image_paths.sort()
+    
+    # Determine output file
+    if args.output:
+        output_path = args.output
+    else:
+        # Use first image name with .mp4 extension
+        first_img = Path(image_paths[0])
+        output_path = str(first_img.with_suffix('.mp4'))
+    
+    # Extract datetimes
+    include_subsec = not args.nosubsec
+    datetimes = []
+    
+    exif_field = EXIF_FIELDS.get(args.exif.lower(), args.exif)
+    
+    for img_path in image_paths:
+        if args.filetime:
+            dt_str = get_file_datetime(img_path, include_subsec)
+        else:
+            dt_str = get_exif_datetime(img_path, exif_field, include_subsec)
+        
+        if not dt_str:
+            # Fallback to file time if EXIF not available
+            dt_str = get_file_datetime(img_path, include_subsec)
+        
+        datetimes.append(dt_str)
+    
+    # Determine codec (default to H.265)
+    output_ext = Path(output_path).suffix
+    if args.h264:
+        codec = 'libx264'
+    elif args.h265:
+        codec = 'libx265'
+    else:
+        # Default to H.265, fallback to extension-based if not supported
+        if output_ext.lower() in ['.webm']:
+            codec = 'libvpx-vp9'
+        else:
+            codec = 'libx265'  # Default to H.265
+    
+    # Parse resize
+    resize_filter = None
+    if args.resize:
+        width, height, interlace = parse_resize(args.resize)
+        # Use scale with force_original_aspect_ratio to fit within dimensions
+        if interlace:
+            resize_filter = f"scale={width}:{height}:force_original_aspect_ratio=decrease:flags=lanczos,format=yuv420p"
+        else:
+            resize_filter = f"scale={width}:{height}:force_original_aspect_ratio=decrease:flags=lanczos"
+    
+    # Create subtitle file
+    subtitle_content = generate_subtitle_style(args.theme)
+    subtitle_events = create_subtitle_file(image_paths, datetimes, args.fps, args.theme, args.timezone)
+    subtitle_content += subtitle_events
+    
+    # Write subtitle file to temp file
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.ass', delete=False) as f:
+        f.write(subtitle_content)
+        subtitle_file = f.name
+    
+    # Create temporary work directory with symlinks
+    workdir = tempfile.mkdtemp(prefix='img2mp4_')
+    try:
+        # Determine file extension from first image
+        first_img_path = Path(image_paths[0])
+        img_ext = first_img_path.suffix.lower()
+        if not img_ext:
+            img_ext = '.jpg'  # Default extension
+        
+        # Create symlinks with sequential names
+        _log3(f"Creating symlinks in temporary directory: {workdir}")
+        symlink_paths = []
+        for i, img_path in enumerate(image_paths):
+            # Format: image001.jpg, image002.jpg, etc.
+            symlink_name = f"image{i+1:03d}{img_ext}"
+            symlink_path = os.path.join(workdir, symlink_name)
+            os.symlink(os.path.abspath(img_path), symlink_path)
+            symlink_paths.append(symlink_path)
+        
+        # Build ffmpeg command using image2 demuxer with pattern
+        frame_duration = 1.0 / args.fps
+        
+        # Codec and encoding options
+        encoding_opts = ['-c:v', codec]
+        
+        if args.crf is not None:
+            encoding_opts.extend(['-crf', str(args.crf)])
+        elif args.bandwidth:
+            # Parse bandwidth (e.g., "4M" -> 4000000)
+            bw_str = args.bandwidth.upper()
+            if bw_str.endswith('M'):
+                bitrate = int(float(bw_str[:-1]) * 1000000)
+            elif bw_str.endswith('K'):
+                bitrate = int(float(bw_str[:-1]) * 1000)
+            else:
+                bitrate = int(bw_str)
+            encoding_opts.extend(['-b:v', str(bitrate)])
+        else:
+            # Default CRF based on resolution
+            if args.resize:
+                width, height, _ = parse_resize(args.resize)
+                if width >= 3840:
+                    encoding_opts.extend(['-crf', '20'])
+                elif width >= 1920:
+                    encoding_opts.extend(['-crf', '22'])
+                else:
+                    encoding_opts.extend(['-crf', '23'])
+            else:
+                encoding_opts.extend(['-crf', '22'])
+        
+        # Pixel format
+        encoding_opts.extend(['-pix_fmt', 'yuv420p'])
+        
+        # Build filter for resize and subtitles
+        filter_parts = []
+        
+        # Input video from image sequence (using [0:v] for the first input)
+        video_input = '[0:v]'
+        
+        # Apply resize if needed
+        if resize_filter:
+            resize_output = 'vresize'
+            filter_parts.append(f"{video_input}{resize_filter}[{resize_output}]")
+            subtitle_input = f"[{resize_output}]"
+        else:
+            subtitle_input = video_input
+        
+        # Apply subtitles
+        final_output = 'vfinal'
+        # Escape subtitle path for filter
+        escaped_subtitle = subtitle_file.replace('\\', '\\\\').replace(':', '\\:').replace('[', '\\[').replace(']', '\\]').replace(',', '\\,').replace("'", "\\'")
+        filter_parts.append(f"{subtitle_input}subtitles={escaped_subtitle}[{final_output}]")
+        
+        filter_complex = ';'.join(filter_parts) if filter_parts else None
+        
+        # Build ffmpeg command using image2 demuxer
+        # Hide banner and set log level based on verbosity
+        loglevel = 'info' if _log_level >= 1 else 'error'
+        ffmpeg_cmd = ['ffmpeg', '-y', '-hide_banner', '-loglevel', loglevel]
+        
+        # Use image2 demuxer with pattern
+        # Pattern: image%03d.jpg matches image001.jpg, image002.jpg, etc.
+        pattern = os.path.join(workdir, f"image%03d{img_ext}")
+        ffmpeg_cmd.extend(['-framerate', str(args.fps), '-i', pattern])
+        
+        # Add filter complex if needed
+        if filter_complex:
+            ffmpeg_cmd.extend(['-filter_complex', filter_complex])
+            ffmpeg_cmd.extend(['-map', f'[{final_output}]'])
+        
+        # Set output framerate
+        ffmpeg_cmd.extend(['-r', str(args.fps)])
+        
+        # Set total duration explicitly
+        total_duration = len(image_paths) * frame_duration
+        ffmpeg_cmd.extend(['-t', str(total_duration)])
+        
+        # Add encoding options
+        ffmpeg_cmd.extend(encoding_opts)
+        
+        # Copy EXIF metadata from first image to video
+        exif_metadata = extract_exif_metadata(image_paths[0])
+        for key, value in exif_metadata.items():
+            ffmpeg_cmd.extend(['-metadata', f'{key}={value}'])
+        
+        # No audio
+        ffmpeg_cmd.extend(['-an'])
+        
+        # Output
+        ffmpeg_cmd.append(output_path)
+        
+        # Run ffmpeg
+        _log1(f"Converting {len(image_paths)} images to {output_path}...")
+        _log1(f"FPS: {args.fps}, Theme: {args.theme}, Codec: {codec}")
+        
+        _log2(f"FFmpeg command: {' '.join(ffmpeg_cmd)}")
+        
+        # Hide ffmpeg output unless in verbose mode
+        # In verbose mode, show ffmpeg output; otherwise suppress it
+        if _log_level >= 1:
+            # Verbose mode: show ffmpeg output
+            result = subprocess.run(ffmpeg_cmd, text=True)
+        else:
+            # Normal mode: hide ffmpeg output
+            result = subprocess.run(ffmpeg_cmd, capture_output=True, text=True)
+        
+        if result.returncode != 0:
+            _error("Error running ffmpeg:")
+            if result.stderr:
+                _error(result.stderr)
+            if result.stdout:
+                _error(result.stdout)
+            sys.exit(1)
+        
+        # Show ffmpeg output in verbose mode
+        if _log_level <= 1 and result.stderr:
+            _log2(result.stderr)
+        if _log_level <= 1 and result.stdout:
+            _log2(result.stdout)
+        
+        # Check output file size
+        if os.path.exists(output_path):
+            file_size = os.path.getsize(output_path)
+            file_size_mb = file_size / (1024 * 1024)
+            print(f"Successfully created: {output_path} ({file_size_mb:.2f} MB)")
+            if file_size < 1024 * 1024:  # Less than 1MB
+                _warn(f"Warning: Generated video is very small ({file_size_mb:.2f} MB), may indicate encoding issues")
+        else:
+            _error(f"Output file was not created: {output_path}")
+            sys.exit(1)
+        
+    finally:
+        # Clean up temp files
+        if os.path.exists(subtitle_file):
+            os.unlink(subtitle_file)
+        # Clean up work directory
+        if 'workdir' in locals() and os.path.exists(workdir):
+            import shutil
+            shutil.rmtree(workdir)
+            _log3(f"Cleaned up temporary directory: {workdir}")
+
+if __name__ == '__main__':
+    main()
+

@@ -1,0 +1,180 @@
+.TH IMG2MP4 1 "2024-12-18" "img2mp4 1.0.0" "User Commands"
+.SH NAME
+img2mp4 \- Convert image series to video with timecode as subtitle
+.SH SYNOPSIS
+.B img2mp4
+[\fIOPTIONS\fR] \fIIMAGE\fR...
+.SH DESCRIPTION
+\fBimg2mp4\fR converts a series of images into a video file with timecode
+subtitles extracted from EXIF data or file modification times.
+.PP
+The tool supports multiple subtitle themes, configurable encoding options,
+and automatic timezone detection.
+.SH OPTIONS
+.TP
+\fB\-g\fR, \fB\-\-resize\fR \fISIZE\fR[\fIW\fR|\fIWxH\fR|\fIW*H\fR][\fITYPE\fR]
+Resize images to fit within SIZE. Default 1080 means height 1080.
+Can specify \fIWxH\fR or \fIW*H\fR for width and height.
+Type can be \fBp\fR or \fBi\fR, for example \fB1080i\fR, \fB4kp\fR.
+.TP
+\fB\-r\fR, \fB\-\-fps\fR \fIFPS\fR
+Frame rate (default: 29.97)
+.TP
+\fB\-o\fR, \fB\-\-output\fR \fIFILE.EXT\fR
+Output file. Default uses the first IMAGE name with \fB.mp4\fR extension.
+Default codec is H.265 (use \fB\-4\fR for H.264, or \fB.webm\fR extension for VP9).
+.TP
+\fB\-\-crf\fR \fINUM\fR
+Specify constant rate factor
+.TP
+\fB\-b\fR, \fB\-\-bandwidth\fR \fINUM\fR[\fIunit=M\fR]
+Specify bandwidth (bps), e.g., \fB4M\fR
+.TP
+\fB\-4\fR, \fB\-\-h264\fR
+Use H.264 codec (default: H.265)
+.TP
+\fB\-5\fR, \fB\-\-h265\fR
+Use H.265 codec (default, can be omitted)
+.TP
+\fB\-t\fR, \fB\-\-theme\fR \fINAME\fR
+Specify subtitle theme (default: \fBsplit\fR)
+.TP
+\fB\-F\fR, \fB\-\-filetime\fR
+Use file modification time instead of EXIF (default: use EXIF)
+.TP
+\fB\-e\fR, \fB\-\-exif\fR \fIFIELD\fR
+Use specific EXIF field, \fBDateTimeOriginal\fR by default
+.TP
+\fB\-S\fR, \fB\-\-nosubsec\fR
+Ignore subsecond fields (default: included)
+.TP
+\fB\-\-timezone\fR \fIOFFSET\fR
+Timezone offset (default: auto-detected from system)
+.TP
+\fB\-q\fR, \fB\-\-quiet\fR
+Quiet mode (decrease loglevel, can be specified multiple times)
+.TP
+\fB\-v\fR, \fB\-\-verbose\fR
+Verbose output (use \fB\-vv\fR, \fB\-vvv\fR for more detail)
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Show help message and exit
+.TP
+\fB\-\-version\fR
+Show version information and exit
+.SH SUBTITLE THEMES
+.TP
+\fBsplit\fR (default)
+Subtitle at top left and bottom right
+.RS
+.IP "Top left:" 4
+small mono font, FiraCode preferred
+.br
+example: "2025-12-18"
+.IP "Bottom right:" 4
+small mono font, FiraCode preferred
+.br
+example: "03:21:53.123 +0800"
+.RE
+.TP
+\fBsimple\fR
+Subtitle at bottom right
+.RS
+.IP "Format:" 4
+small mono font, FiraCode preferred
+.br
+example: "2025-12-18 03:21:53.123 +0800"
+.RE
+.TP
+\fBlarge\fR
+Subtitle at bottom center
+.RS
+.IP "Format:" 4
+large sans font
+.br
+example: "Thu Dec 18 03:21:53.123 PM CST 2025"
+.RE
+.SH EXIF FIELDS
+Case-insensitive field names:
+.TP
+\fB9003\fR, \fBOriginal\fR, \fBTaken\fR, \fBDateTimeOriginal\fR (default)
+Original date/time when image was taken
+.TP
+\fB9004\fR, \fBDigitized\fR, \fBDateTimeDigitized\fR
+Date/time when image was digitized
+.TP
+\fB0132\fR, \fBModify\fR, \fBModified\fR, \fBFileModifyDate\fR, \fBDate\fR
+File modification date/time
+.SH REFERENCE
+.TS
+allbox;
+lb lb lb lb
+l l l l.
+Resolution	Recommended Bitrate	Recommended CRF	Recommended FPS
+4K	20–35 Mbps	18–22	30/60
+1080p	5–8 Mbps	20–23	30/60
+720p	2.5–5 Mbps	23–25	30
+.TE
+.SH EXAMPLES
+.TP
+Basic usage:
+.RS
+img2mp4 image1.jpg image2.jpg image3.jpg
+.RE
+.TP
+Resize to 1080p, 30fps:
+.RS
+img2mp4 -g 1080p -r 30 *.jpg
+.RE
+.TP
+Use H.264 codec with CRF 20:
+.RS
+img2mp4 -4 --crf 20 -o output.mp4 *.jpg
+.RE
+.TP
+Use file modification time, simple theme:
+.RS
+img2mp4 -F -t simple *.jpg
+.RE
+.TP
+4K output with specific bandwidth:
+.RS
+img2mp4 -g 4kp -b 25M *.jpg
+.RE
+.TP
+Verbose mode to see ffmpeg command:
+.RS
+img2mp4 -v *.jpg
+.RE
+.SH FILES
+.TP
+\fB/usr/bin/img2mp4\fR
+Main Python script
+.TP
+\fB/usr/bin/img2mp4.sh\fR
+Bash implementation
+.TP
+\fB/usr/share/bash-completion/completions/img2mp4\fR
+Bash completion script
+.SH REQUIREMENTS
+.TP
+Python 3.6+
+.TP
+Pillow (PIL) >= 10.0.0
+.TP
+ffmpeg
+.TP
+exiftool (optional, for better EXIF support in bash version)
+.SH AUTHOR
+Lenik <debian@bodz.net>
+.SH SEE ALSO
+.BR ffmpeg (1),
+.BR exiftool (1),
+.BR bash (1)
+.SH BUGS
+Report bugs at https://github.com/lenik/img2mp4/issues
+.SH COPYRIGHT
+Copyright \(co 2024 Lenik
+.br
+License: GPL-3.0-or-later
+

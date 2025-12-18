@@ -1,0 +1,10 @@
+img2mp4 (1.0.0-1) unstable; urgency=medium
+
+  * Initial release
+  * Convert image series to video with timecode subtitles
+  * Support for EXIF datetime extraction
+  * Multiple subtitle themes
+  * H.264/H.265 codec support
+
+ -- Your Name <your.email@example.com>  Mon, 01 Jan 2024 12:00:00 +0000
+

@@ -1,0 +1,27 @@
+use logging framework if any, or:
+
+    convert "if args.verbose: print" to _log functions:
+        _log0   default enabled
+        _log1   default enabled, but disabled if -q
+        _log2   enabled if -v, in gray color
+        _log3   enabled if -vv, in lightgray color
+        _log4   enabled if -vvv, in lightgray color
+        _dbg    == _log4
+        _warn   always, in orange color (ANSI ESC), the function returns false
+        _error  always, in red bold color, the function returns false
+        _fatal  always, in red bold color and blink, the function returns false
+
+    _log0 reserved for future, use print instead.
+    log levels for warn=-1, error=-2, fatal=-3.
+
+    -v/--verbose can specified multitimes and increase the loglevel by one each time.
+    -q/--quiet can specified multitimes and decrease the loglevel by one each time.
+
+
+debug:
+
+    Add Makefile and install-debug target to setup symlinks under dirs in PREFIX (=/usr),
+    for example:
+        /bin/img2mp4 -> <project-dir>/img2mp4
+        /usr/share/bash-completion/completions/img2mp4 -> <project-dir>/img2mp4.bash-completion
+        /usr/share/bash-completion/completions/img2mp4.sh -> <project-dir>/img2mp4.bash-completion

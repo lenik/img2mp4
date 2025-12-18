@@ -1,0 +1,79 @@
+# bash completion for img2mp4
+# Install: copy to /etc/bash_completion.d/img2mp4 or source it
+
+_img2mp4()
+{
+    local cur prev words cword
+    COMPREPLY=()
+    cur="${COMP_WORDS[COMP_CWORD]}"
+    prev="${COMP_WORDS[COMP_CWORD-1]}"
+    words=("${COMP_WORDS[@]}")
+    cword=$COMP_CWORD
+
+    # Options
+    local opts="-g --resize -r --fps -o --output --crf -b --bandwidth -4 --h264 -5 --h265 -t --theme -F --filetime -e --exif -S --nosubsec --timezone -q --quiet -v --verbose -h --help --version"
+
+    # Handle option arguments
+    case "$prev" in
+        -g|--resize)
+            # Suggest common resize values
+            COMPREPLY=($(compgen -W "1080 1080p 1080i 720 720p 4k 4kp 1920x1080 1920*1080" -- "$cur"))
+            return 0
+            ;;
+        -r|--fps)
+            # Suggest common FPS values
+            COMPREPLY=($(compgen -W "23.976 24 25 29.97 30 50 60" -- "$cur"))
+            return 0
+            ;;
+        -o|--output)
+            # Complete filenames
+            compopt -o filenames
+            COMPREPLY=($(compgen -f -- "$cur"))
+            return 0
+            ;;
+        --crf)
+            # Suggest CRF values
+            COMPREPLY=($(compgen -W "18 19 20 21 22 23 24 25 26 27 28" -- "$cur"))
+            return 0
+            ;;
+        -b|--bandwidth)
+            # Suggest bandwidth values
+            COMPREPLY=($(compgen -W "1M 2M 4M 5M 8M 10M 20M 25M 35M" -- "$cur"))
+            return 0
+            ;;
+        -t|--theme)
+            # Suggest theme names
+            COMPREPLY=($(compgen -W "split simple large" -- "$cur"))
+            return 0
+            ;;
+        -e|--exif)
+            # Suggest EXIF field names
+            COMPREPLY=($(compgen -W "DateTimeOriginal DateTimeDigitized DateTime 9003 9004 0132 original taken digitized modify modified" -- "$cur"))
+            return 0
+            ;;
+        --timezone)
+            # Suggest timezone offsets
+            COMPREPLY=($(compgen -W "+0000 +0800 -0500 -0800" -- "$cur"))
+            return 0
+            ;;
+        -v|--verbose|-q|--quiet|-4|--h264|-5|--h265|-F|--filetime|-S|--nosubsec|-h|--help|--version)
+            # These options don't take arguments, complete image files
+            compopt -o filenames
+            COMPREPLY=($(compgen -f -X '!*.{jpg,jpeg,png,gif,bmp,tiff,tif,JPG,JPEG,PNG,GIF,BMP,TIFF,TIF}' -- "$cur"))
+            return 0
+            ;;
+    esac
+
+    # If current word starts with -, complete options
+    if [[ "$cur" == -* ]]; then
+        COMPREPLY=($(compgen -W "$opts" -- "$cur"))
+        return 0
+    fi
+
+    # Otherwise, complete image files
+    compopt -o filenames
+    COMPREPLY=($(compgen -f -X '!*.{jpg,jpeg,png,gif,bmp,tiff,tif,JPG,JPEG,PNG,GIF,BMP,TIFF,TIF}' -- "$cur"))
+}
+
+complete -F _img2mp4 img2mp4 img2mp4.sh
+
