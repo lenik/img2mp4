@@ -1,4 +1,4 @@
-img2mp4 (1.0.0-1) unstable; urgency=medium
+img2mp4 (1.0.0-1) stable; urgency=medium
 
   * Initial release
   * Convert image series to video with timecode subtitles
@@ -6,5 +6,5 @@ img2mp4 (1.0.0-1) unstable; urgency=medium
   * Multiple subtitle themes
   * H.264/H.265 codec support
 
- -- Your Name <your.email@example.com>  Mon, 01 Jan 2024 12:00:00 +0000
+ -- Lenik (谢继雷) <lenik@bodz.net>  Mon, 01 Jan 2024 12:00:00 +0000
 
