@@ -7,6 +7,7 @@ import argparse
 import os
 import sys
 import subprocess
+import shutil
 import tempfile
 import time
 from pathlib import Path
@@ -695,16 +696,13 @@ def main():
         # Add encoding options
         ffmpeg_cmd.extend(encoding_opts)
         
-        # Copy EXIF metadata from first image to video
-        exif_metadata = extract_exif_metadata(image_paths[0])
-        for key, value in exif_metadata.items():
-            ffmpeg_cmd.extend(['-metadata', f'{key}={value}'])
-        
         # No audio
         ffmpeg_cmd.extend(['-an'])
         
         # Output
         ffmpeg_cmd.append(output_path)
+        
+        # Note: EXIF metadata will be copied after video creation using exiftool
         
         # Run ffmpeg
         _log1(f"Converting {len(image_paths)} images to {output_path}...")
@@ -746,13 +744,49 @@ def main():
             _error(f"Output file was not created: {output_path}")
             sys.exit(1)
         
+        # Copy EXIF metadata from first image to video using exiftool
+        if shutil.which('exiftool'):
+            _log2("Copying EXIF metadata from first image to video...")
+            try:
+                # Copy all EXIF metadata from first image
+                exiftool_cmd = ['exiftool', '-overwrite_original', '-tagsFromFile', image_paths[0], output_path]
+                if _log_level >= 2:
+                    subprocess.run(exiftool_cmd, text=True)
+                else:
+                    subprocess.run(exiftool_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, text=True)
+                
+                # Add generator/version info to Software field
+                # Get current Software value if it exists
+                get_software_cmd = ['exiftool', '-s', '-s', '-s', '-Software', output_path]
+                result = subprocess.run(get_software_cmd, capture_output=True, text=True)
+                current_software = result.stdout.strip() if result.returncode == 0 else ""
+                
+                # Build new Software value
+                generator_info = "img2mp4 1.0.0"
+                if current_software:
+                    new_software = f"{current_software}, {generator_info}"
+                else:
+                    new_software = generator_info
+                
+                # Set Software field
+                set_software_cmd = ['exiftool', '-overwrite_original', f'-Software={new_software}', output_path]
+                if _log_level >= 2:
+                    subprocess.run(set_software_cmd, text=True)
+                else:
+                    subprocess.run(set_software_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, text=True)
+                
+                _log2("EXIF metadata copied successfully")
+            except Exception as e:
+                _warn(f"Could not copy EXIF metadata: {e}")
+        else:
+            _log3("exiftool not found, skipping EXIF metadata copy")
+        
     finally:
         # Clean up temp files
         if os.path.exists(subtitle_file):
             os.unlink(subtitle_file)
         # Clean up work directory
         if 'workdir' in locals() and os.path.exists(workdir):
-            import shutil
             shutil.rmtree(workdir)
             _log3(f"Cleaned up temporary directory: {workdir}")
 

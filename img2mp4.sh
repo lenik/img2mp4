@@ -428,35 +428,6 @@ function main() {
         ffmpeg_cmd+=("-crf" "22")
     fi
     
-    # Copy EXIF metadata from first image to video
-    if command -v exiftool >/dev/null 2>&1; then
-        _log3 "Extracting EXIF metadata from first image"
-        # Extract common EXIF fields and add as metadata
-        local dt_original=$(exiftool -s -s -s -DateTimeOriginal "${IMAGES[0]}" 2>/dev/null)
-        if [ -n "$dt_original" ]; then
-            # Format datetime for video (YYYY-MM-DDTHH:MM:SS)
-            local formatted_dt=$(echo "$dt_original" | sed 's/\([0-9]\{4\}\):\([0-9]\{2\}\):\([0-9]\{2\}\) \([0-9]\{2\}:[0-9]\{2\}:[0-9]\{2\}\)/\1-\2-\3T\4/')
-            ffmpeg_cmd+=("-metadata" "creation_time=$formatted_dt")
-        fi
-        
-        local make=$(exiftool -s -s -s -Make "${IMAGES[0]}" 2>/dev/null)
-        [ -n "$make" ] && ffmpeg_cmd+=("-metadata" "com.android.capture.firmware=$make")
-        
-        local model=$(exiftool -s -s -s -Model "${IMAGES[0]}" 2>/dev/null)
-        [ -n "$model" ] && ffmpeg_cmd+=("-metadata" "com.android.capture.device=$model")
-        
-        local software=$(exiftool -s -s -s -Software "${IMAGES[0]}" 2>/dev/null)
-        [ -n "$software" ] && ffmpeg_cmd+=("-metadata" "encoder=$software")
-        
-        local artist=$(exiftool -s -s -s -Artist "${IMAGES[0]}" 2>/dev/null)
-        [ -n "$artist" ] && ffmpeg_cmd+=("-metadata" "artist=$artist")
-        
-        local copyright=$(exiftool -s -s -s -Copyright "${IMAGES[0]}" 2>/dev/null)
-        [ -n "$copyright" ] && ffmpeg_cmd+=("-metadata" "copyright=$copyright")
-        
-        local description=$(exiftool -s -s -s -ImageDescription "${IMAGES[0]}" 2>/dev/null)
-        [ -n "$description" ] && ffmpeg_cmd+=("-metadata" "description=$description")
-    fi
     
     ffmpeg_cmd+=("-pix_fmt" "yuv420p" "-an" "$OUTPUT")
     
@@ -479,6 +450,39 @@ function main() {
         echo "Successfully created: $OUTPUT ($file_size_mb MB)"
         if [ "$file_size" -lt 1048576 ]; then
             _warn "Warning: Generated video is very small ($file_size_mb MB), may indicate encoding issues"
+        fi
+        
+        # Copy EXIF metadata from first image to video using exiftool
+        if command -v exiftool >/dev/null 2>&1; then
+            _log2 "Copying EXIF metadata from first image to video..."
+            # Copy all EXIF metadata from first image
+            if [ $LOGLEVEL -ge 2 ]; then
+                exiftool -overwrite_original -tagsFromFile "${IMAGES[0]}" "$OUTPUT"
+            else
+                exiftool -overwrite_original -tagsFromFile "${IMAGES[0]}" "$OUTPUT" >/dev/null 2>&1
+            fi
+            
+            # Add generator/version info to Software field
+            local current_software=$(exiftool -s -s -s -Software "$OUTPUT" 2>/dev/null)
+            local generator_info="img2mp4 1.0.0"
+            local new_software
+            
+            if [ -n "$current_software" ]; then
+                new_software="${current_software}, ${generator_info}"
+            else
+                new_software="$generator_info"
+            fi
+            
+            # Set Software field
+            if [ $LOGLEVEL -ge 2 ]; then
+                exiftool -overwrite_original -Software="$new_software" "$OUTPUT"
+            else
+                exiftool -overwrite_original -Software="$new_software" "$OUTPUT" >/dev/null 2>&1
+            fi
+            
+            _log2 "EXIF metadata copied successfully"
+        else
+            _log3 "exiftool not found, skipping EXIF metadata copy"
         fi
     else
         _error "Output file was not created: $OUTPUT"
