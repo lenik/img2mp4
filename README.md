@@ -36,8 +36,12 @@ sudo dpkg -i ../img2mp4_*.deb
 ## Usage
 
 ```bash
-img2mp4 IMAGE...
+img2mp4 [OPTIONS] IMAGE... [DIRECTORY...]
 ```
+
+If a directory is specified, all image files in that directory will be used, sorted in version order (natural sort). This correctly handles mixed text/numbers, ordering file-1.9 before file-1.10, file9a before file10a, etc.
+
+When the first argument is a directory, the output video will be placed beside the directory (not inside it).
 
 ### Options
 
@@ -53,6 +57,7 @@ img2mp4 IMAGE...
 - `-e, --exif FIELD`: Use specific EXIF field, `DateTimeOriginal` by default
 - `-S, --nosubsec`: Ignore subsecond fields (default: included)
 - `--timezone OFFSET`: Timezone offset (default: auto-detected from system)
+- `-k, --delete`: Delete input image files after successful conversion
 - `-q, --quiet`: Quiet mode (decrease loglevel, can be specified multiple times)
 - `-v, --verbose`: Verbose output (use `-vv`, `-vvv` for more detail)
 
@@ -112,6 +117,12 @@ img2mp4 -F -t simple *.jpg
 
 # 4K output with specific bandwidth
 img2mp4 -g 4kp -b 25M *.jpg
+
+# Process all images in a directory
+img2mp4 /path/to/images/
+
+# Process directory and delete source images after conversion
+img2mp4 -k /path/to/images/
 
 # Verbose mode to see ffmpeg command
 img2mp4 -v *.jpg

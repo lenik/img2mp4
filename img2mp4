@@ -10,6 +10,8 @@ import subprocess
 import shutil
 import tempfile
 import time
+import re
+import glob
 from pathlib import Path
 from datetime import datetime
 from PIL import Image
@@ -449,6 +451,32 @@ def get_system_timezone():
         pass
     return '+0000'
 
+def natural_sort_key(text):
+    """Convert text to a sort key for natural/version sorting.
+    Handles mixed text/numbers correctly, e.g., file-1.9 before file-1.10.
+    """
+    def convert(text):
+        return int(text) if text.isdigit() else text.lower()
+    
+    return [convert(c) for c in re.split(r'(\d+)', text)]
+
+def collect_images_from_directory(directory):
+    """Collect all image files from a directory."""
+    image_extensions = {'.jpg', '.jpeg', '.png', '.gif', '.bmp', '.tiff', '.tif',
+                       '.JPG', '.JPEG', '.PNG', '.GIF', '.BMP', '.TIFF', '.TIF'}
+    images = []
+    
+    for entry in os.listdir(directory):
+        entry_path = os.path.join(directory, entry)
+        if os.path.isfile(entry_path):
+            ext = os.path.splitext(entry)[1]
+            if ext in image_extensions:
+                images.append(entry_path)
+    
+    # Sort using natural/version sort
+    images.sort(key=lambda x: natural_sort_key(os.path.basename(x)))
+    return images
+
 def expand_combined_short_options(argv):
     """Expand combined short options like -v5 to -v -5."""
     expanded = []
@@ -511,6 +539,8 @@ def main():
     parser.add_argument('-S', '--nosubsec', action='store_true',
                        help='Ignore subsecond fields')
     parser.add_argument('--timezone', default=None, help='Timezone offset (default: from system)')
+    parser.add_argument('-k', '--delete', action='store_true',
+                       help='Delete input image files after successful conversion')
     parser.add_argument('-q', '--quiet', action='count', default=0, help='Quiet mode (decrease loglevel, can be specified multiple times)')
     parser.add_argument('-v', '--verbose', action='count', default=0, help='Verbose output (use -vv, -vvv for more)')
     
@@ -526,24 +556,51 @@ def main():
     if args.timezone is None:
         args.timezone = get_system_timezone()
     
-    # Validate input images
+    # Collect input images (handle directories)
     image_paths = []
+    first_arg_is_dir = False
+    first_dir_path = None
+    
     for img_path in args.images:
         if not os.path.exists(img_path):
-            _error(f"Image not found: {img_path}")
+            _error(f"Path not found: {img_path}")
             sys.exit(1)
-        image_paths.append(img_path)
+        
+        if os.path.isdir(img_path):
+            # Collect all images from directory
+            dir_images = collect_images_from_directory(img_path)
+            if not dir_images:
+                _warn(f"No image files found in directory: {img_path}")
+            else:
+                image_paths.extend(dir_images)
+                # Track if first argument is a directory
+                if len(image_paths) == len(dir_images):
+                    first_arg_is_dir = True
+                    first_dir_path = img_path
+        else:
+            # Regular file
+            image_paths.append(img_path)
     
-    # Sort images by filename
-    image_paths.sort()
+    if not image_paths:
+        _error("No image files found")
+        sys.exit(1)
+    
+    # Sort images by filename using natural sort
+    image_paths.sort(key=lambda x: natural_sort_key(os.path.basename(x)))
     
     # Determine output file
     if args.output:
         output_path = args.output
     else:
-        # Use first image name with .mp4 extension
-        first_img = Path(image_paths[0])
-        output_path = str(first_img.with_suffix('.mp4'))
+        if first_arg_is_dir and first_dir_path:
+            # When first arg is directory, place output beside the directory
+            dir_name = os.path.basename(os.path.abspath(first_dir_path))
+            dir_parent = os.path.dirname(os.path.abspath(first_dir_path))
+            output_path = os.path.join(dir_parent, f"{dir_name}.mp4")
+        else:
+            # Use first image name with .mp4 extension
+            first_img = Path(image_paths[0])
+            output_path = str(first_img.with_suffix('.mp4'))
     
     # Extract datetimes
     include_subsec = not args.nosubsec
@@ -780,6 +837,31 @@ def main():
                 _warn(f"Could not copy EXIF metadata: {e}")
         else:
             _log3("exiftool not found, skipping EXIF metadata copy")
+        
+        # Delete input images if requested
+        if args.delete:
+            _log1(f"Deleting {len(image_paths)} input image files...")
+            deleted_dirs = set()
+            for img_path in image_paths:
+                try:
+                    if os.path.exists(img_path):
+                        img_dir = os.path.dirname(os.path.abspath(img_path))
+                        os.unlink(img_path)
+                        _log2(f"Deleted: {img_path}")
+                        deleted_dirs.add(img_dir)
+                except Exception as e:
+                    _warn(f"Could not delete {img_path}: {e}")
+            
+            # Remove empty directories
+            for dir_path in deleted_dirs:
+                try:
+                    if os.path.isdir(dir_path):
+                        # Check if directory is empty (only . and ..)
+                        if not os.listdir(dir_path):
+                            os.rmdir(dir_path)
+                            _log2(f"Removed empty directory: {dir_path}")
+                except Exception as e:
+                    _log3(f"Could not remove directory {dir_path}: {e}")
         
     finally:
         # Clean up temp files

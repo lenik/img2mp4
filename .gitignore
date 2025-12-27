@@ -10,11 +10,20 @@ build/
 
 # Debian
 debian/img2mp4/
+debian/tmp/
+debian/*-stamp
+debian/*.substvars
+debian/*.debhelper
+debian/*.debhelper.log
+debian/files
+debian/*.log
 *.deb
 *.dsc
 *.changes
 *.tar.gz
+*.tar.xz
 *.buildinfo
+*.build
 
 # Editor
 .vscode/

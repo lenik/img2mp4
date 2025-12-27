@@ -3,10 +3,17 @@
 img2mp4 \- Convert image series to video with timecode as subtitle
 .SH SYNOPSIS
 .B img2mp4
-[\fIOPTIONS\fR] \fIIMAGE\fR...
+[\fIOPTIONS\fR] \fIIMAGE\fR... [\fIDIRECTORY\fR...]
 .SH DESCRIPTION
 \fBimg2mp4\fR converts a series of images into a video file with timecode
 subtitles extracted from EXIF data or file modification times.
+.PP
+If a directory is specified, all image files in that directory will be used,
+sorted in version order (natural sort). This correctly handles mixed text/numbers,
+ordering file-1.9 before file-1.10, file9a before file10a, etc.
+.PP
+When the first argument is a directory, the output video will be placed beside
+the directory (not inside it).
 .PP
 The tool supports multiple subtitle themes, configurable encoding options,
 and automatic timezone detection.
@@ -50,6 +57,10 @@ Ignore subsecond fields (default: included)
 .TP
 \fB\-\-timezone\fR \fIOFFSET\fR
 Timezone offset (default: auto-detected from system)
+.TP
+\fB\-k\fR, \fB\-\-delete\fR
+Delete input image files after successful conversion. If a directory becomes
+empty after deletion, it will also be removed.
 .TP
 \fB\-q\fR, \fB\-\-quiet\fR
 Quiet mode (decrease loglevel, can be specified multiple times)
@@ -140,6 +151,16 @@ img2mp4 -F -t simple *.jpg
 4K output with specific bandwidth:
 .RS
 img2mp4 -g 4kp -b 25M *.jpg
+.RE
+.TP
+Process all images in a directory:
+.RS
+img2mp4 /path/to/images/
+.RE
+.TP
+Process directory and delete source images after conversion:
+.RS
+img2mp4 -k /path/to/images/
 .RE
 .TP
 Verbose mode to see ffmpeg command:

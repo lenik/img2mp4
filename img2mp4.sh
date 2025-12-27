@@ -16,6 +16,7 @@
     option -e --exif =FIELD          "EXIF field to use (default: DateTimeOriginal)"
     option -S --nosubsec             "Ignore subsecond fields"
     option    --timezone =OFFSET     "Timezone offset (default: auto-detected)"
+    option -k --delete               "Delete input image files after successful conversion"
     option -q --quiet
     option -v --verbose
     option -h --help
@@ -41,6 +42,35 @@ get_system_timezone() {
     else
         date +%z 2>/dev/null || echo "+0000"
     fi
+}
+
+# Collect images from directory
+collect_images_from_directory() {
+    local dir="$1"
+    local images=()
+    local image_extensions="jpg jpeg png gif bmp tiff tif JPG JPEG PNG GIF BMP TIFF TIF"
+    
+    # Enable nullglob to handle cases where no files match
+    local old_nullglob=$(shopt -p nullglob)
+    shopt -s nullglob
+    
+    for ext in $image_extensions; do
+        for img in "$dir"/*."$ext"; do
+            [ -f "$img" ] && images+=("$img")
+        done
+    done
+    
+    # Restore nullglob setting
+    eval "$old_nullglob"
+    
+    # Sort using version sort (natural sort)
+    # sort -V handles mixed text/numbers correctly
+    if [ ${#images[@]} -gt 0 ]; then
+        IFS=$'\n' images=($(printf '%s\n' "${images[@]}" | sort -V))
+        unset IFS
+    fi
+    
+    printf '%s\n' "${images[@]}"
 }
 
 # Parse resize specification
@@ -276,6 +306,8 @@ function setopt() {
             NOSUBSEC=true;;
         --timezone)
             TIMEZONE="$2";;
+        -k|--delete)
+            DELETE=true;;
         -q|--quiet)
             LOGLEVEL=$((LOGLEVEL - 1));;
         -v|--verbose)
@@ -290,27 +322,68 @@ function setopt() {
 }
 
 function main() {
-    local IMAGES=("$@")
+    local INPUTS=("$@")
+    local IMAGES=()
+    local first_arg_is_dir=false
+    local first_dir_path=""
     
-    if [ ${#IMAGES[@]} -eq 0 ]; then
-        _error "No images specified"
+    if [ ${#INPUTS[@]} -eq 0 ]; then
+        _error "No images or directories specified"
         _error "Note: If using glob patterns like *.jpg, make sure they match files"
         _error "The shell expands globs before passing to the script"
         exit 1
     fi
+    
+    # Collect images (handle directories)
+    for input_path in "${INPUTS[@]}"; do
+        if [ ! -e "$input_path" ]; then
+            _error "Path not found: $input_path"
+            exit 1
+        fi
+        
+        if [ -d "$input_path" ]; then
+            # Collect all images from directory
+            local dir_images=($(collect_images_from_directory "$input_path"))
+            if [ ${#dir_images[@]} -eq 0 ]; then
+                _warn "No image files found in directory: $input_path"
+            else
+                IMAGES+=("${dir_images[@]}")
+                # Track if first argument is a directory
+                if [ ${#IMAGES[@]} -eq ${#dir_images[@]} ]; then
+                    first_arg_is_dir=true
+                    first_dir_path="$input_path"
+                fi
+            fi
+        else
+            # Regular file
+            IMAGES+=("$input_path")
+        fi
+    done
+    
+    if [ ${#IMAGES[@]} -eq 0 ]; then
+        _error "No image files found"
+        exit 1
+    fi
+    
+    # Sort images using version sort (natural sort)
+    IFS=$'\n' IMAGES=($(printf '%s\n' "${IMAGES[@]}" | sort -V))
+    unset IFS
     
     # Get timezone if not specified
     if [ -z "$TIMEZONE" ]; then
         TIMEZONE=$(get_system_timezone)
     fi
     
-    # Sort images
-    IFS=$'\n' IMAGES=($(sort <<<"${IMAGES[*]}"))
-    unset IFS
-    
     # Determine output file
     if [ -z "$OUTPUT" ]; then
-        OUTPUT="${IMAGES[0]%.*}.mp4"
+        if [ "$first_arg_is_dir" = true ] && [ -n "$first_dir_path" ]; then
+            # When first arg is directory, place output beside the directory
+            local dir_name=$(basename "$(realpath "$first_dir_path")")
+            local dir_parent=$(dirname "$(realpath "$first_dir_path")")
+            OUTPUT="$dir_parent/$dir_name.mp4"
+        else
+            OUTPUT="${IMAGES[0]%.*}.mp4"
+        fi
     fi
     
     # Determine codec (default to H.265)
@@ -483,6 +556,35 @@ function main() {
             _log2 "EXIF metadata copied successfully"
         else
             _log3 "exiftool not found, skipping EXIF metadata copy"
+        fi
+        
+        # Delete input images if requested
+        if [ "$DELETE" = true ]; then
+            _log1 "Deleting ${#IMAGES[@]} input image files..."
+            local deleted_dirs=()
+            for img in "${IMAGES[@]}"; do
+                if [ -f "$img" ]; then
+                    local img_dir=$(dirname "$(realpath "$img")")
+                    if rm -f "$img"; then
+                        _log2 "Deleted: $img"
+                        # Track directories that had files deleted
+                        local found=false
+                        for dir in "${deleted_dirs[@]}"; do
+                            [ "$dir" = "$img_dir" ] && found=true && break
+                        done
+                        [ "$found" = false ] && deleted_dirs+=("$img_dir")
+                    else
+                        _warn "Could not delete: $img"
+                    fi
+                fi
+            done
+            
+            # Remove empty directories
+            for dir in "${deleted_dirs[@]}"; do
+                if [ -d "$dir" ] && [ -z "$(ls -A "$dir" 2>/dev/null)" ]; then
+                    rmdir "$dir" 2>/dev/null && _log2 "Removed empty directory: $dir" || _log3 "Could not remove directory: $dir"
+                fi
+            done
         fi
     else
         _error "Output file was not created: $OUTPUT"
