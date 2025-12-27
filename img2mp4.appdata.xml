@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="console-application">
+  <id>img2mp4</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-3.0-or-later</project_license>
+  <name>img2mp4</name>
+  <summary>Convert image series to video with timecode as subtitle</summary>
+  <description>
+    <p>
+      img2mp4 is a command-line tool that converts a series of images into a video file
+      with timecode subtitles extracted from EXIF data or file modification times.
+    </p>
+    <p>Features:</p>
+    <ul>
+      <li>Automatic timecode extraction from EXIF metadata or file modification times</li>
+      <li>Multiple subtitle themes (split, simple, large)</li>
+      <li>Flexible image resizing with support for common resolutions (1080p, 4K, etc.)</li>
+      <li>Multiple codec support (H.264, H.265, VP9)</li>
+      <li>EXIF metadata preservation - copies metadata from source images to output video</li>
+      <li>Automatic timezone detection from system settings</li>
+      <li>Directory support - process all images in a directory with natural sorting</li>
+      <li>Two implementations - Python and Bash versions available</li>
+    </ul>
+  </description>
+  <url type="homepage">https://github.com/lenik/img2mp4</url>
+  <url type="bugtracker">https://github.com/lenik/img2mp4/issues</url>
+  <url type="help">https://github.com/lenik/img2mp4/wiki</url>
+  <developer_name>Lenik</developer_name>
+  <categories>
+    <category>Video</category>
+    <category>ConsoleOnly</category>
+  </categories>
+  <keywords>
+    <keyword>video</keyword>
+    <keyword>image</keyword>
+    <keyword>converter</keyword>
+    <keyword>timecode</keyword>
+    <keyword>subtitle</keyword>
+    <keyword>exif</keyword>
+    <keyword>ffmpeg</keyword>
+  </keywords>
+  <provides>
+    <binary>img2mp4</binary>
+    <binary>img2mp4.sh</binary>
+  </provides>
+  <releases>
+    <release version="1.0.0" date="2024-12-18">
+      <description>
+        <p>Initial release</p>
+        <ul>
+          <li>Convert image series to video with timecode subtitles</li>
+          <li>Support for H.264, H.265, and VP9 codecs</li>
+          <li>Multiple subtitle themes</li>
+          <li>EXIF metadata extraction and preservation</li>
+          <li>Directory support with natural sorting</li>
+          <li>Delete option to remove source files after conversion</li>
+        </ul>
+      </description>
+    </release>
+  </releases>
+</component>

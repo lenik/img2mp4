@@ -9,6 +9,7 @@ override_dh_auto_install:
 	install -D -m 755 img2mp4.sh $(CURDIR)/debian/img2mp4/usr/bin/img2mp4.sh
 	install -D -m 644 img2mp4.bash-completion $(CURDIR)/debian/img2mp4/etc/bash_completion.d/img2mp4
 	install -D -m 644 img2mp4.1 $(CURDIR)/debian/img2mp4/usr/share/man/man1/img2mp4.1
+	install -D -m 644 img2mp4.appdata.xml $(CURDIR)/debian/img2mp4/usr/share/metainfo/img2mp4.appdata.xml
 
 override_dh_python3:
 	dh_python3
