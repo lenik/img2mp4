@@ -541,6 +541,10 @@ def main():
     parser.add_argument('--timezone', default=None, help='Timezone offset (default: from system)')
     parser.add_argument('-k', '--delete', action='store_true',
                        help='Delete input image files after successful conversion')
+    parser.add_argument('-f', '--force', action='store_true',
+                       help='Overwrite existing output file without prompting')
+    parser.add_argument('-i', '--interactive', action='store_true',
+                       help='Prompt for confirmation before overwriting existing output file')
     parser.add_argument('-q', '--quiet', action='count', default=0, help='Quiet mode (decrease loglevel, can be specified multiple times)')
     parser.add_argument('-v', '--verbose', action='count', default=0, help='Verbose output (use -vv, -vvv for more)')
     
@@ -555,6 +559,82 @@ def main():
     # Get timezone if not specified
     if args.timezone is None:
         args.timezone = get_system_timezone()
+    
+    # Handle directory arguments: if multiple args and some are directories,
+    # process each directory separately by recursively calling the script
+    if len(args.images) > 1:
+        # Separate directories from files
+        dirs = []
+        files = []
+        
+        for img_path in args.images:
+            if not os.path.exists(img_path):
+                _error(f"Path not found: {img_path}")
+                sys.exit(1)
+            
+            if os.path.isdir(img_path):
+                dirs.append(img_path)
+            else:
+                files.append(img_path)
+        
+        # If there are directories and multiple arguments, process each directory separately
+        if dirs:
+            # Build command line arguments (excluding the image arguments)
+            cmd_args = []
+            # Use absolute path to script
+            script_path = os.path.abspath(sys.argv[0])
+            
+            # Reconstruct all options (but not -o, as each directory gets its own output)
+            if args.resize:
+                cmd_args.extend(['-g', args.resize])
+            if args.fps != 29.97:
+                cmd_args.extend(['-r', str(args.fps)])
+            # Don't pass -o: each directory will get its own output beside the directory
+            if args.crf is not None:
+                cmd_args.extend(['--crf', str(args.crf)])
+            if args.bandwidth:
+                cmd_args.extend(['-b', args.bandwidth])
+            if args.h264:
+                cmd_args.append('-4')
+            if args.h265:
+                cmd_args.append('-5')
+            if args.theme != 'split':
+                cmd_args.extend(['-t', args.theme])
+            if args.filetime:
+                cmd_args.append('-F')
+            if args.exif != 'DateTimeOriginal':
+                cmd_args.extend(['-e', args.exif])
+            if args.nosubsec:
+                cmd_args.append('-S')
+            if args.timezone:
+                cmd_args.extend(['--timezone', args.timezone])
+            if args.delete:
+                cmd_args.append('-k')
+            if args.force:
+                cmd_args.append('-f')
+            if args.interactive:
+                cmd_args.append('-i')
+            # Add quiet/verbose flags
+            for _ in range(args.quiet):
+                cmd_args.append('-q')
+            for _ in range(args.verbose):
+                cmd_args.append('-v')
+            
+            # Process each directory separately
+            for dir_path in dirs:
+                _log2(f"Processing directory separately: {dir_path}")
+                cmd = [sys.executable, script_path] + cmd_args + [dir_path]
+                result = subprocess.run(cmd)
+                if result.returncode != 0:
+                    _error(f"Failed to process directory: {dir_path}")
+                    sys.exit(result.returncode)
+            
+            # If there are remaining files, process them together
+            if files:
+                args.images = files
+            else:
+                # All arguments were directories, we're done
+                return
     
     # Collect input images (handle directories)
     image_paths = []
@@ -601,6 +681,24 @@ def main():
             # Use first image name with .mp4 extension
             first_img = Path(image_paths[0])
             output_path = str(first_img.with_suffix('.mp4'))
+    
+    # Check if output file exists and handle accordingly
+    if os.path.exists(output_path):
+        if args.force:
+            _log2(f"Output file exists, overwriting: {output_path}")
+        elif args.interactive:
+            try:
+                response = input(f"Output file exists: {output_path}\nOverwrite? [y/N]: ").strip().lower()
+                if response not in ['y', 'yes']:
+                    _error("Operation cancelled by user")
+                    sys.exit(1)
+            except (EOFError, KeyboardInterrupt):
+                _error("Operation cancelled by user")
+                sys.exit(1)
+        else:
+            _error(f"Output file already exists: {output_path}")
+            _error("Use -f/--force to overwrite or -i/--interactive to confirm")
+            sys.exit(1)
     
     # Extract datetimes
     include_subsec = not args.nosubsec

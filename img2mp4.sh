@@ -6,17 +6,19 @@
     . shlib-import cliboot log
     option -g --resize =SIZE        "Resize images (default: 1080)"
     option -r --fps =FPS            "Frame rate (default: 29.97)"
-    option -o --output =FILE         "Output file"
-    option    --crf =NUM             "Constant rate factor"
-    option -b --bandwidth =NUM       "Bandwidth (e.g., 4M)"
-    option -4 --h264                 "Use H.264 codec"
-    option -5 --h265                 "Use H.265 codec"
-    option -t --theme =NAME          "Subtitle theme (split/simple/large, default: split)"
-    option -F --filetime             "Use file modification time instead of EXIF"
-    option -e --exif =FIELD          "EXIF field to use (default: DateTimeOriginal)"
-    option -S --nosubsec             "Ignore subsecond fields"
-    option    --timezone =OFFSET     "Timezone offset (default: auto-detected)"
-    option -k --delete               "Delete input image files after successful conversion"
+    option -o --output =FILE        "Output file"
+    option    --crf =NUM            "Constant rate factor"
+    option -b --bandwidth =NUM      "Bandwidth (e.g., 4M)"
+    option -4 --h264                "Use H.264 codec"
+    option -5 --h265                "Use H.265 codec"
+    option -t --theme =NAME         "Subtitle theme (split/simple/large, default: split)"
+    option -F --filetime            "Use file modification time instead of EXIF"
+    option -e --exif =FIELD         "EXIF field to use (default: DateTimeOriginal)"
+    option -S --nosubsec            "Ignore subsecond fields"
+    option    --timezone =OFFSET    "Timezone offset (default: auto-detected)"
+    option -k --delete              "Delete input image files after successful conversion"
+    option -f --force                "Overwrite existing output file without prompting"
+    option -i --interactive          "Prompt for confirmation before overwriting existing output file"
     option -q --quiet
     option -v --verbose
     option -h --help
@@ -34,6 +36,8 @@
     EXIF_FIELD="DateTimeOriginal"
     NOSUBSEC=false
     TIMEZONE=""
+    FORCE=false
+    INTERACTIVE=false
 
 # Get system timezone
 get_system_timezone() {
@@ -308,6 +312,10 @@ function setopt() {
             TIMEZONE="$2";;
         -k|--delete)
             DELETE=true;;
+        -f|--force)
+            FORCE=true;;
+        -i|--interactive)
+            INTERACTIVE=true;;
         -q|--quiet)
             LOGLEVEL=$((LOGLEVEL - 1));;
         -v|--verbose)
@@ -321,6 +329,42 @@ function setopt() {
     esac
 }
 
+# Build command line arguments from current option values and store in global array CMD_ARGS
+build_cmd_args() {
+    CMD_ARGS=()
+    
+    [ -n "$RESIZE" ] && CMD_ARGS+=(-g "$RESIZE")
+    [ "$FPS" != "29.97" ] && CMD_ARGS+=(-r "$FPS")
+    # Don't pass -o: each directory will get its own output beside the directory
+    [ -n "$CRF" ] && CMD_ARGS+=(--crf "$CRF")
+    [ -n "$BANDWIDTH" ] && CMD_ARGS+=(-b "$BANDWIDTH")
+    [ "$CODEC" = "libx264" ] && CMD_ARGS+=(-4)
+    [ "$CODEC" = "libx265" ] && CMD_ARGS+=(-5)
+    [ "$THEME" != "split" ] && CMD_ARGS+=(-t "$THEME")
+    [ "$FILETIME" = "true" ] && CMD_ARGS+=(-F)
+    [ "$EXIF_FIELD" != "DateTimeOriginal" ] && CMD_ARGS+=(-e "$EXIF_FIELD")
+    [ "$NOSUBSEC" = "true" ] && CMD_ARGS+=(-S)
+    [ -n "$TIMEZONE" ] && CMD_ARGS+=(--timezone "$TIMEZONE")
+    [ "$DELETE" = "true" ] && CMD_ARGS+=(-k)
+    [ "$FORCE" = "true" ] && CMD_ARGS+=(-f)
+    [ "$INTERACTIVE" = "true" ] && CMD_ARGS+=(-i)
+    
+    # Reconstruct -q/-v flags from LOGLEVEL
+    # LOGLEVEL starts at 0, each -q decreases by 1, each -v increases by 1
+    # We'll approximate by adding -v for positive LOGLEVEL and -q for negative
+    # This isn't perfect but should work for most cases
+    local i
+    if [ "$LOGLEVEL" -gt 0 ]; then
+        for ((i=0; i<LOGLEVEL; i++)); do
+            CMD_ARGS+=(-v)
+        done
+    elif [ "$LOGLEVEL" -lt 0 ]; then
+        for ((i=0; i>LOGLEVEL; i--)); do
+            CMD_ARGS+=(-q)
+        done
+    fi
+}
+
 function main() {
     local INPUTS=("$@")
     local IMAGES=()
@@ -332,6 +376,48 @@ function main() {
         _error "Note: If using glob patterns like *.jpg, make sure they match files"
         _error "The shell expands globs before passing to the script"
         exit 1
+    fi
+    
+    # Handle directory arguments: if multiple args and some are directories,
+    # process each directory separately by recursively calling the script
+    if [ ${#INPUTS[@]} -gt 1 ]; then
+        # Separate directories from files
+        local dirs=()
+        local files=()
+        
+        for input_path in "${INPUTS[@]}"; do
+            if [ ! -e "$input_path" ]; then
+                _error "Path not found: $input_path"
+                exit 1
+            fi
+            
+            if [ -d "$input_path" ]; then
+                dirs+=("$input_path")
+            else
+                files+=("$input_path")
+            fi
+        done
+        
+        # If there are directories and multiple arguments, process each directory separately
+        if [ ${#dirs[@]} -gt 0 ]; then
+            # Build command line arguments
+            build_cmd_args
+            local script_path="$0"
+            
+            # Process each directory separately
+            for dir_path in "${dirs[@]}"; do
+                _log2 "Processing directory separately: $dir_path"
+                "$script_path" "${CMD_ARGS[@]}" "$dir_path" || exit $?
+            done
+            
+            # If there are remaining files, process them together
+            if [ ${#files[@]} -gt 0 ]; then
+                INPUTS=("${files[@]}")
+            else
+                # All arguments were directories, we're done
+                return 0
+            fi
+        fi
     fi
     
     # Collect images (handle directories)
@@ -383,6 +469,33 @@ function main() {
             OUTPUT="$dir_parent/$dir_name.mp4"
         else
             OUTPUT="${IMAGES[0]%.*}.mp4"
+        fi
+    fi
+    
+    # Check if output file exists and handle accordingly
+    if [ -f "$OUTPUT" ]; then
+        if [ "$FORCE" = "true" ]; then
+            _log2 "Output file exists, overwriting: $OUTPUT"
+        elif [ "$INTERACTIVE" = "true" ]; then
+            printf "Output file exists: %s\nOverwrite? [y/N]: " "$OUTPUT"
+            local response
+            if ! read -r response; then
+                _error "Operation cancelled by user"
+                exit 1
+            fi
+            case "$response" in
+                [yY]|[yY][eE][sS])
+                    _log2 "User confirmed overwrite"
+                    ;;
+                *)
+                    _error "Operation cancelled by user"
+                    exit 1
+                    ;;
+            esac
+        else
+            _error "Output file already exists: $OUTPUT"
+            _error "Use -f/--force to overwrite or -i/--interactive to confirm"
+            exit 1
         fi
     fi
     

@@ -62,6 +62,14 @@ Timezone offset (default: auto-detected from system)
 Delete input image files after successful conversion. If a directory becomes
 empty after deletion, it will also be removed.
 .TP
+\fB\-f\fR, \fB\-\-force\fR
+Overwrite existing output file without prompting. By default, the tool will
+fail if the output file already exists.
+.TP
+\fB\-i\fR, \fB\-\-interactive\fR
+Prompt for confirmation before overwriting existing output file. If the user
+does not confirm, the tool will exit with an error.
+.TP
 \fB\-q\fR, \fB\-\-quiet\fR
 Quiet mode (decrease loglevel, can be specified multiple times)
 .TP
@@ -161,6 +169,16 @@ img2mp4 /path/to/images/
 Process directory and delete source images after conversion:
 .RS
 img2mp4 -k /path/to/images/
+.RE
+.TP
+Overwrite existing output file without prompting:
+.RS
+img2mp4 -f -o output.mp4 *.jpg
+.RE
+.TP
+Prompt for confirmation before overwriting:
+.RS
+img2mp4 -i -o output.mp4 *.jpg
 .RE
 .TP
 Verbose mode to see ffmpeg command:

@@ -58,6 +58,8 @@ When the first argument is a directory, the output video will be placed beside t
 - `-S, --nosubsec`: Ignore subsecond fields (default: included)
 - `--timezone OFFSET`: Timezone offset (default: auto-detected from system)
 - `-k, --delete`: Delete input image files after successful conversion
+- `-f, --force`: Overwrite existing output file without prompting
+- `-i, --interactive`: Prompt for confirmation before overwriting existing output file
 - `-q, --quiet`: Quiet mode (decrease loglevel, can be specified multiple times)
 - `-v, --verbose`: Verbose output (use `-vv`, `-vvv` for more detail)
 
@@ -123,6 +125,12 @@ img2mp4 /path/to/images/
 
 # Process directory and delete source images after conversion
 img2mp4 -k /path/to/images/
+
+# Overwrite existing output file without prompting
+img2mp4 -f -o output.mp4 *.jpg
+
+# Prompt for confirmation before overwriting
+img2mp4 -i -o output.mp4 *.jpg
 
 # Verbose mode to see ffmpeg command
 img2mp4 -v *.jpg
