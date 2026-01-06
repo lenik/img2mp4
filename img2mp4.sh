@@ -11,14 +11,15 @@
     option -b --bandwidth =NUM      "Bandwidth (e.g., 4M)"
     option -4 --h264                "Use H.264 codec"
     option -5 --h265                "Use H.265 codec"
-    option -t --theme =NAME         "Subtitle theme (split/simple/large, default: split)"
+    option -T --theme =NAME         "Subtitle theme (split/simple/large, default: split)"
+    option -t --sort-time           "Sort by file modification time (or EXIF time if --exif specified) instead of filename"
     option -F --filetime            "Use file modification time instead of EXIF"
     option -e --exif =FIELD         "EXIF field to use (default: DateTimeOriginal)"
     option -S --nosubsec            "Ignore subsecond fields"
     option    --timezone =OFFSET    "Timezone offset (default: auto-detected)"
     option -k --delete              "Delete input image files after successful conversion"
-    option -f --force                "Overwrite existing output file without prompting"
-    option -i --interactive          "Prompt for confirmation before overwriting existing output file"
+    option -f --force               "Overwrite existing output file without prompting"
+    option -i --interactive         "Prompt for confirmation before overwriting existing output file"
     option -q --quiet
     option -v --verbose
     option -h --help
@@ -38,6 +39,7 @@
     TIMEZONE=""
     FORCE=false
     INTERACTIVE=false
+    SORT_TIME=false
 
 # Get system timezone
 get_system_timezone() {
@@ -48,9 +50,45 @@ get_system_timezone() {
     fi
 }
 
+# Get timestamp for sorting (EXIF if available and use_exif=true, else file mtime)
+get_sort_timestamp() {
+    local img="$1"
+    local use_exif="$2"
+    local exif_field="$3"
+    
+    if [ "$use_exif" = "true" ] && [ -n "$exif_field" ] && command -v exiftool >/dev/null 2>&1; then
+        # Try to get EXIF datetime
+        local dt_str=$(exiftool -s -s -s "-${exif_field}" "$img" 2>/dev/null)
+        if [ -n "$dt_str" ]; then
+            # Parse EXIF datetime format: "YYYY:MM:DD HH:MM:SS" or "YYYY:MM:DD HH:MM:SS.xxx"
+            # Convert to epoch timestamp
+            local year month day hour min sec
+            if [[ "$dt_str" =~ ^([0-9]{4}):([0-9]{2}):([0-9]{2})\ ([0-9]{2}):([0-9]{2}):([0-9]{2}) ]]; then
+                year="${BASH_REMATCH[1]}"
+                month="${BASH_REMATCH[2]}"
+                day="${BASH_REMATCH[3]}"
+                hour="${BASH_REMATCH[4]}"
+                min="${BASH_REMATCH[5]}"
+                sec="${BASH_REMATCH[6]}"
+                # Try GNU date first, then fallback to other methods
+                local ts=$(date -d "${year}-${month}-${day} ${hour}:${min}:${sec}" +%s 2>/dev/null)
+                if [ -n "$ts" ] && [ "$ts" != "0" ]; then
+                    echo "$ts"
+                    return
+                fi
+                # Fallback: try with different date format or use file mtime
+            fi
+        fi
+    fi
+    
+    # Fallback to file modification time
+    stat -c %Y "$img" 2>/dev/null || stat -f %m "$img" 2>/dev/null || echo 0
+}
+
 # Collect images from directory
 collect_images_from_directory() {
     local dir="$1"
+    local sort_by_time="$2"
     local images=()
     local image_extensions="jpg jpeg png gif bmp tiff tif JPG JPEG PNG GIF BMP TIFF TIF"
     
@@ -67,9 +105,21 @@ collect_images_from_directory() {
     # Restore nullglob setting
     eval "$old_nullglob"
     
-    # Sort using version sort (natural sort)
-    # sort -V handles mixed text/numbers correctly
-    if [ ${#images[@]} -gt 0 ]; then
+    # Sort images
+    if [ "$sort_by_time" = "true" ] && [ ${#images[@]} -gt 0 ]; then
+        # Sort by timestamp
+        local use_exif="false"
+        [ "$FILETIME" != "true" ] && use_exif="true"
+        IFS=$'\n' images=($(
+            for img in "${images[@]}"; do
+                local ts=$(get_sort_timestamp "$img" "$use_exif" "$EXIF_FIELD")
+                printf '%s\t%s\n' "$ts" "$img"
+            done | sort -n -t$'\t' -k1 | cut -f2-
+        ))
+        unset IFS
+    elif [ ${#images[@]} -gt 0 ]; then
+        # Sort using version sort (natural sort)
+        # sort -V handles mixed text/numbers correctly
         IFS=$'\n' images=($(printf '%s\n' "${images[@]}" | sort -V))
         unset IFS
     fi
@@ -300,8 +350,10 @@ function setopt() {
             CODEC="libx264";;
         -5|--h265)
             CODEC="libx265";;
-        -t|--theme)
+        -T|--theme)
             THEME="$2";;
+        -t|--sort-time)
+            SORT_TIME=true;;
         -F|--filetime)
             FILETIME=true;;
         -e|--exif)
@@ -340,7 +392,8 @@ build_cmd_args() {
     [ -n "$BANDWIDTH" ] && CMD_ARGS+=(-b "$BANDWIDTH")
     [ "$CODEC" = "libx264" ] && CMD_ARGS+=(-4)
     [ "$CODEC" = "libx265" ] && CMD_ARGS+=(-5)
-    [ "$THEME" != "split" ] && CMD_ARGS+=(-t "$THEME")
+    [ "$THEME" != "split" ] && CMD_ARGS+=(-T "$THEME")
+    [ "$SORT_TIME" = "true" ] && CMD_ARGS+=(-t)
     [ "$FILETIME" = "true" ] && CMD_ARGS+=(-F)
     [ "$EXIF_FIELD" != "DateTimeOriginal" ] && CMD_ARGS+=(-e "$EXIF_FIELD")
     [ "$NOSUBSEC" = "true" ] && CMD_ARGS+=(-S)
@@ -429,7 +482,7 @@ function main() {
         
         if [ -d "$input_path" ]; then
             # Collect all images from directory
-            local dir_images=($(collect_images_from_directory "$input_path"))
+            local dir_images=($(collect_images_from_directory "$input_path" "$SORT_TIME"))
             if [ ${#dir_images[@]} -eq 0 ]; then
                 _warn "No image files found in directory: $input_path"
             else
@@ -451,9 +504,23 @@ function main() {
         exit 1
     fi
     
-    # Sort images using version sort (natural sort)
-    IFS=$'\n' IMAGES=($(printf '%s\n' "${IMAGES[@]}" | sort -V))
-    unset IFS
+    # Sort images
+    if [ "$SORT_TIME" = "true" ]; then
+        # Sort by timestamp (EXIF if --exif specified, else file mtime)
+        local use_exif="false"
+        [ "$FILETIME" != "true" ] && use_exif="true"
+        IFS=$'\n' IMAGES=($(
+            for img in "${IMAGES[@]}"; do
+                local ts=$(get_sort_timestamp "$img" "$use_exif" "$EXIF_FIELD")
+                printf '%s\t%s\n' "$ts" "$img"
+            done | sort -n -t$'\t' -k1 | cut -f2-
+        ))
+        unset IFS
+    else
+        # Sort using version sort (natural sort)
+        IFS=$'\n' IMAGES=($(printf '%s\n' "${IMAGES[@]}" | sort -V))
+        unset IFS
+    fi
     
     # Get timezone if not specified
     if [ -z "$TIMEZONE" ]; then

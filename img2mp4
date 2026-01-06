@@ -175,6 +175,25 @@ def get_file_datetime(image_path, include_subsec=True):
     except Exception:
         return None
 
+def get_sort_timestamp(image_path, exif_field=None, use_exif=False):
+    """Get timestamp for sorting: EXIF time if use_exif and available, else file mtime."""
+    if use_exif and exif_field:
+        dt_str = get_exif_datetime(image_path, exif_field, include_subsec=True)
+        if dt_str:
+            try:
+                # Parse the datetime string to get a timestamp
+                parsed = parse_datetime(dt_str)
+                if parsed and parsed['datetime']:
+                    return parsed['datetime'].timestamp()
+            except Exception:
+                pass
+    
+    # Fallback to file modification time
+    try:
+        return os.path.getmtime(image_path)
+    except Exception:
+        return 0
+
 def parse_datetime(dt_str):
     """Parse datetime string and return components."""
     # Handle format: "YYYY:MM:DD HH:MM:SS[.SSS]"
@@ -530,8 +549,10 @@ def main():
     parser.add_argument('-b', '--bandwidth', help='Bandwidth in bps (e.g., 4M)')
     parser.add_argument('-4', '--h264', action='store_true', help='Use H.264 codec')
     parser.add_argument('-5', '--h265', action='store_true', help='Use H.265 codec')
-    parser.add_argument('-t', '--theme', default='split', choices=['split', 'simple', 'large'],
+    parser.add_argument('-T', '--theme', default='split', choices=['split', 'simple', 'large'],
                        help='Subtitle theme (default: split)')
+    parser.add_argument('-t', '--sort-time', action='store_true',
+                       help='Sort by file modification time (or EXIF time if --exif specified) instead of filename')
     parser.add_argument('-F', '--filetime', action='store_true',
                        help='Use file modification time instead of EXIF')
     parser.add_argument('-e', '--exif', default='DateTimeOriginal',
@@ -599,7 +620,9 @@ def main():
             if args.h265:
                 cmd_args.append('-5')
             if args.theme != 'split':
-                cmd_args.extend(['-t', args.theme])
+                cmd_args.extend(['-T', args.theme])
+            if args.sort_time:
+                cmd_args.append('-t')
             if args.filetime:
                 cmd_args.append('-F')
             if args.exif != 'DateTimeOriginal':
@@ -665,8 +688,14 @@ def main():
         _error("No image files found")
         sys.exit(1)
     
-    # Sort images by filename using natural sort
-    image_paths.sort(key=lambda x: natural_sort_key(os.path.basename(x)))
+    # Sort images
+    if args.sort_time:
+        # Sort by timestamp (EXIF if --exif specified, else file mtime)
+        exif_field = EXIF_FIELDS.get(args.exif.lower(), args.exif)
+        image_paths.sort(key=lambda x: get_sort_timestamp(x, exif_field, use_exif=not args.filetime))
+    else:
+        # Sort by filename using natural sort
+        image_paths.sort(key=lambda x: natural_sort_key(os.path.basename(x)))
     
     # Determine output file
     if args.output:

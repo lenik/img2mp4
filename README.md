@@ -52,7 +52,8 @@ When the first argument is a directory, the output video will be placed beside t
 - `-b, --bandwidth NUM[unit=M]`: Specify bandwidth (bps), e.g., `4M`
 - `-4, --h264`: Use H.264 codec (default: H.265)
 - `-5, --h265`: Use H.265 codec (default, can be omitted)
-- `-t, --theme NAME`: Specify subtitle theme (default: `split`)
+- `-T, --theme NAME`: Specify subtitle theme (default: `split`)
+- `-t, --sort-time`: Sort by file modification time (or EXIF time if `--exif` specified) instead of filename
 - `-F, --filetime`: Use file modification time instead of EXIF (default: use EXIF)
 - `-e, --exif FIELD`: Use specific EXIF field, `DateTimeOriginal` by default
 - `-S, --nosubsec`: Ignore subsecond fields (default: included)
@@ -115,7 +116,13 @@ img2mp4 -4 --crf 20 -o output.mp4 *.jpg
 img2mp4 -5 --crf 20 -o output.mp4 *.jpg
 
 # Use file modification time, simple theme
-img2mp4 -F -t simple *.jpg
+img2mp4 -F -T simple *.jpg
+
+# Sort by time instead of filename
+img2mp4 -t *.jpg
+
+# Sort by EXIF time (when --exif is specified)
+img2mp4 -t -e DateTimeOriginal *.jpg
 
 # 4K output with specific bandwidth
 img2mp4 -g 4kp -b 25M *.jpg

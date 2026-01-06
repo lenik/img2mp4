@@ -43,8 +43,12 @@ Use H.264 codec (default: H.265)
 \fB\-5\fR, \fB\-\-h265\fR
 Use H.265 codec (default, can be omitted)
 .TP
-\fB\-t\fR, \fB\-\-theme\fR \fINAME\fR
+\fB\-T\fR, \fB\-\-theme\fR \fINAME\fR
 Specify subtitle theme (default: \fBsplit\fR)
+.TP
+\fB\-t\fR, \fB\-\-sort-time\fR
+Sort by file modification time (or EXIF time if \fB\-\-exif\fR specified)
+instead of filename.
 .TP
 \fB\-F\fR, \fB\-\-filetime\fR
 Use file modification time instead of EXIF (default: use EXIF)
@@ -153,7 +157,17 @@ img2mp4 -4 --crf 20 -o output.mp4 *.jpg
 .TP
 Use file modification time, simple theme:
 .RS
-img2mp4 -F -t simple *.jpg
+img2mp4 -F -T simple *.jpg
+.RE
+.TP
+Sort by time instead of filename:
+.RS
+img2mp4 -t *.jpg
+.RE
+.TP
+Sort by EXIF time:
+.RS
+img2mp4 -t -e DateTimeOriginal *.jpg
 .RE
 .TP
 4K output with specific bandwidth:

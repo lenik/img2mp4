@@ -11,7 +11,7 @@ _img2mp4()
     cword=$COMP_CWORD
 
     # Options
-    local opts="-g --resize -r --fps -o --output --crf -b --bandwidth -4 --h264 -5 --h265 -t --theme -F --filetime -e --exif -S --nosubsec --timezone -k --delete -f --force -i --interactive -q --quiet -v --verbose -h --help --version"
+    local opts="-g --resize -r --fps -o --output --crf -b --bandwidth -4 --h264 -5 --h265 -T --theme -t --sort-time -F --filetime -e --exif -S --nosubsec --timezone -k --delete -f --force -i --interactive -q --quiet -v --verbose -h --help --version"
 
     # Handle option arguments
     case "$prev" in
@@ -41,7 +41,7 @@ _img2mp4()
             COMPREPLY=($(compgen -W "1M 2M 4M 5M 8M 10M 20M 25M 35M" -- "$cur"))
             return 0
             ;;
-        -t|--theme)
+        -T|--theme)
             # Suggest theme names
             COMPREPLY=($(compgen -W "split simple large" -- "$cur"))
             return 0
@@ -56,7 +56,7 @@ _img2mp4()
             COMPREPLY=($(compgen -W "+0000 +0800 -0500 -0800" -- "$cur"))
             return 0
             ;;
-        -v|--verbose|-q|--quiet|-4|--h264|-5|--h265|-F|--filetime|-S|--nosubsec|-k|--delete|-f|--force|-i|--interactive|-h|--help|--version)
+        -v|--verbose|-q|--quiet|-4|--h264|-5|--h265|-F|--filetime|-S|--nosubsec|-k|--delete|-f|--force|-i|--interactive|-t|--sort-time|-h|--help|--version)
             # These options don't take arguments, complete image files
             compopt -o filenames
             COMPREPLY=($(compgen -f -X '!*.{jpg,jpeg,png,gif,bmp,tiff,tif,JPG,JPEG,PNG,GIF,BMP,TIFF,TIF}' -- "$cur"))
