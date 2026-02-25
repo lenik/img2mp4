@@ -127,6 +127,65 @@ collect_images_from_directory() {
     printf '%s\n' "${images[@]}"
 }
 
+# Directory names (case-insensitive) to strip from output path when from dir, e.g. foo/DCIM/file.jpg -> foo/file.mp4
+STRIP_DIR_NAMES="webcam auto-shoot camera b612 dcim images image pictures picture"
+
+# Remove trailing path components that match STRIP_DIR_NAMES (case-insensitive). Sets effective_parent and was_stripped.
+path_without_trailing_strip_dirs() {
+    local path="$1"
+    local resolved
+    resolved=$(realpath "$path" 2>/dev/null) || resolved=$(cd "$path" 2>/dev/null && pwd) || resolved="$path"
+    resolved=$(echo "$resolved" | sed 's|/\+|/|g')
+    effective_parent="$resolved"
+    was_stripped=false
+    while [ -n "$effective_parent" ]; do
+        local base
+        base=$(basename "$effective_parent")
+        local found=false
+        for name in $STRIP_DIR_NAMES; do
+            if [ "$(echo "$base" | tr '[:upper:]' '[:lower:]')" = "$(echo "$name" | tr '[:upper:]' '[:lower:]')" ]; then
+                found=true
+                break
+            fi
+        done
+        [ "$found" = false ] && break
+        was_stripped=true
+        effective_parent=$(dirname "$effective_parent")
+        [ "$effective_parent" = "$resolved" ] && break
+    done
+    [ -z "$effective_parent" ] && effective_parent="."
+}
+
+# Remove empty directories and their empty parents as far up as possible. Argument: list of directory paths.
+remove_empty_parents() {
+    local deleted_dirs=("$@")
+    local dir
+    while IFS= read -r dir; do
+        [ -z "$dir" ] && continue
+        if [ -d "$dir" ] && [ -z "$(ls -A "$dir" 2>/dev/null)" ]; then
+            if rmdir "$dir" 2>/dev/null; then
+                _log2 "Removed empty directory: $dir"
+                local parent
+                parent=$(dirname "$dir")
+                while [ -n "$parent" ] && [ "$parent" != "$dir" ] && [ -d "$parent" ]; do
+                    if [ -n "$(ls -A "$parent" 2>/dev/null)" ]; then
+                        break
+                    fi
+                    if rmdir "$parent" 2>/dev/null; then
+                        _log2 "Removed empty directory: $parent"
+                        dir="$parent"
+                        parent=$(dirname "$parent")
+                    else
+                        break
+                    fi
+                done
+            else
+                _log3 "Could not remove directory: $dir"
+            fi
+        fi
+    done < <(printf '%s\n' "${deleted_dirs[@]}" | awk -F/ 'NF { print NF"\t"$0 }' | sort -rn -k1 | cut -f2-)
+}
+
 # Parse resize specification
 parse_resize() {
     local size_str="$1"
@@ -418,92 +477,21 @@ build_cmd_args() {
     fi
 }
 
-function main() {
-    local INPUTS=("$@")
-    local IMAGES=()
-    local first_arg_is_dir=false
-    local first_dir_path=""
-    
-    if [ ${#INPUTS[@]} -eq 0 ]; then
-        _error "No images or directories specified"
-        _error "Note: If using glob patterns like *.jpg, make sure they match files"
-        _error "The shell expands globs before passing to the script"
-        exit 1
+# Create one video from IMAGES (global). Uses OUTPUT if set; else FROM_DIR for default dir output; else first image base. Deletes files only when DELETE=true (no rmdir).
+mkvideo_from_files() {
+    [ ${#IMAGES[@]} -eq 0 ] && return
+    # Determine output file
+    if [ -z "$OUTPUT" ] && [ -n "$FROM_DIR" ]; then
+        local resolved
+        resolved=$(realpath "$FROM_DIR" 2>/dev/null) || resolved="$FROM_DIR"
+        local dir_name dir_parent
+        dir_name=$(basename "$resolved")
+        dir_parent=$(dirname "$resolved")
+        OUTPUT="$dir_parent/$dir_name.mp4"
     fi
-    
-    # Handle directory arguments: if multiple args and some are directories,
-    # process each directory separately by recursively calling the script
-    if [ ${#INPUTS[@]} -gt 1 ]; then
-        # Separate directories from files
-        local dirs=()
-        local files=()
-        
-        for input_path in "${INPUTS[@]}"; do
-            if [ ! -e "$input_path" ]; then
-                _error "Path not found: $input_path"
-                exit 1
-            fi
-            
-            if [ -d "$input_path" ]; then
-                dirs+=("$input_path")
-            else
-                files+=("$input_path")
-            fi
-        done
-        
-        # If there are directories and multiple arguments, process each directory separately
-        if [ ${#dirs[@]} -gt 0 ]; then
-            # Build command line arguments
-            build_cmd_args
-            local script_path="$0"
-            
-            # Process each directory separately
-            for dir_path in "${dirs[@]}"; do
-                _log2 "Processing directory separately: $dir_path"
-                "$script_path" "${CMD_ARGS[@]}" "$dir_path" || exit $?
-            done
-            
-            # If there are remaining files, process them together
-            if [ ${#files[@]} -gt 0 ]; then
-                INPUTS=("${files[@]}")
-            else
-                # All arguments were directories, we're done
-                return 0
-            fi
-        fi
+    if [ -z "$OUTPUT" ]; then
+        OUTPUT="${IMAGES[0]%.*}.mp4"
     fi
-    
-    # Collect images (handle directories)
-    for input_path in "${INPUTS[@]}"; do
-        if [ ! -e "$input_path" ]; then
-            _error "Path not found: $input_path"
-            exit 1
-        fi
-        
-        if [ -d "$input_path" ]; then
-            # Collect all images from directory
-            local dir_images=($(collect_images_from_directory "$input_path" "$SORT_TIME"))
-            if [ ${#dir_images[@]} -eq 0 ]; then
-                _warn "No image files found in directory: $input_path"
-            else
-                IMAGES+=("${dir_images[@]}")
-                # Track if first argument is a directory
-                if [ ${#IMAGES[@]} -eq ${#dir_images[@]} ]; then
-                    first_arg_is_dir=true
-                    first_dir_path="$input_path"
-                fi
-            fi
-        else
-            # Regular file
-            IMAGES+=("$input_path")
-        fi
-    done
-    
-    if [ ${#IMAGES[@]} -eq 0 ]; then
-        _error "No image files found"
-        exit 1
-    fi
-    
     # Sort images
     if [ "$SORT_TIME" = "true" ]; then
         # Sort by timestamp (EXIF if --exif specified, else file mtime)
@@ -525,18 +513,6 @@ function main() {
     # Get timezone if not specified
     if [ -z "$TIMEZONE" ]; then
         TIMEZONE=$(get_system_timezone)
-    fi
-    
-    # Determine output file
-    if [ -z "$OUTPUT" ]; then
-        if [ "$first_arg_is_dir" = true ] && [ -n "$first_dir_path" ]; then
-            # When first arg is directory, place output beside the directory
-            local dir_name=$(basename "$(realpath "$first_dir_path")")
-            local dir_parent=$(dirname "$(realpath "$first_dir_path")")
-            OUTPUT="$dir_parent/$dir_name.mp4"
-        else
-            OUTPUT="${IMAGES[0]%.*}.mp4"
-        fi
     fi
     
     # Check if output file exists and handle accordingly
@@ -738,37 +714,103 @@ function main() {
             _log3 "exiftool not found, skipping EXIF metadata copy"
         fi
         
-        # Delete input images if requested
+        # Delete input images if requested (files only; no rmdir)
         if [ "$DELETE" = true ]; then
             _log1 "Deleting ${#IMAGES[@]} input image files..."
-            local deleted_dirs=()
             for img in "${IMAGES[@]}"; do
                 if [ -f "$img" ]; then
-                    local img_dir=$(dirname "$(realpath "$img")")
                     if rm -f "$img"; then
                         _log2 "Deleted: $img"
-                        # Track directories that had files deleted
-                        local found=false
-                        for dir in "${deleted_dirs[@]}"; do
-                            [ "$dir" = "$img_dir" ] && found=true && break
-                        done
-                        [ "$found" = false ] && deleted_dirs+=("$img_dir")
                     else
                         _warn "Could not delete: $img"
                     fi
-                fi
-            done
-            
-            # Remove empty directories
-            for dir in "${deleted_dirs[@]}"; do
-                if [ -d "$dir" ] && [ -z "$(ls -A "$dir" 2>/dev/null)" ]; then
-                    rmdir "$dir" 2>/dev/null && _log2 "Removed empty directory: $dir" || _log3 "Could not remove directory: $dir"
                 fi
             done
         fi
     else
         _error "Output file was not created: $OUTPUT"
         exit 1
+    fi
+}
+
+# Create one video from all images in a directory; if -k, remove empty parents after delete.
+mkvideo_from_dir() {
+    local dir_path="$1"
+    local sort_by_time="$SORT_TIME"
+    IMAGES=($(collect_images_from_directory "$dir_path" "$sort_by_time"))
+    if [ ${#IMAGES[@]} -eq 0 ]; then
+        _warn "No image files found in directory: $dir_path"
+        return 0
+    fi
+    # Strip trailing path components in STRIP_DIR_NAMES (e.g. foo/DCIM -> foo/filename.mp4)
+    path_without_trailing_strip_dirs "$dir_path"
+    if [ "$was_stripped" = true ]; then
+        local first_basename
+        first_basename=$(basename "${IMAGES[0]%.*}")
+        OUTPUT="$effective_parent/$first_basename.mp4"
+        FROM_DIR=""
+    else
+        OUTPUT=""
+        FROM_DIR="$dir_path"
+    fi
+    mkvideo_from_files
+    if [ "$DELETE" = true ]; then
+        local deleted_dirs=()
+        local img
+        for img in "${IMAGES[@]}"; do
+            local img_dir
+            img_dir=$(dirname "$(realpath "$img" 2>/dev/null || echo "$img")")
+            local found=false d
+            for d in "${deleted_dirs[@]}"; do
+                [ "$d" = "$img_dir" ] && found=true && break
+            done
+            [ "$found" = false ] && deleted_dirs+=("$img_dir")
+        done
+        remove_empty_parents "${deleted_dirs[@]}"
+    fi
+}
+
+function main() {
+    local INPUTS=("$@")
+    if [ ${#INPUTS[@]} -eq 0 ]; then
+        _error "No images or directories specified"
+        _error "Note: If using glob patterns like *.jpg, make sure they match files"
+        exit 1
+    fi
+    
+    # Separate directory and file arguments
+    local dirs=()
+    local files=()
+    local path
+    for path in "${INPUTS[@]}"; do
+        if [ ! -e "$path" ]; then
+            _error "Path not found: $path"
+            exit 1
+        fi
+        if [ -d "$path" ]; then
+            dirs+=("$path")
+        else
+            files+=("$path")
+        fi
+    done
+    
+    # Get timezone if not specified
+    if [ -z "$TIMEZONE" ]; then
+        TIMEZONE=$(get_system_timezone)
+    fi
+    
+    # One video per directory
+    local dir_path
+    for dir_path in "${dirs[@]}"; do
+        mkvideo_from_dir "$dir_path"
+    done
+    
+    # One video for all remaining file arguments
+    if [ ${#files[@]} -gt 0 ]; then
+        IMAGES=("${files[@]}")
+        FROM_DIR=""
+        # OUTPUT already set by -o if user passed it
+        mkvideo_from_files
     fi
 }
 

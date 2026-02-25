@@ -496,198 +496,66 @@ def collect_images_from_directory(directory):
     images.sort(key=lambda x: natural_sort_key(os.path.basename(x)))
     return images
 
-def expand_combined_short_options(argv):
-    """Expand combined short options like -v5 to -v -5."""
-    expanded = []
-    i = 0
-    while i < len(argv):
-        arg = argv[i]
-        # Check if it's a short option that can be combined (not --long-option)
-        if arg.startswith('-') and len(arg) > 2 and arg[1] != '-':
-            # Options that are flags (can be combined): -4, -5, -F, -S, -v
-            # Options that take values (cannot be combined): -g, -r, -o, -b, -e, -t
-            # Handle combinations like -v5, -v4, -45, etc.
-            # Note: -vv and -vvv are handled by argparse's action='count', so we don't expand them
-            if arg.startswith('-v') and len(arg) > 2:
-                # Check if it's -vv, -vvv, etc. (multiple v's for verbose)
-                # argparse with action='count' handles these automatically
-                if all(c == 'v' for c in arg[2:]):
-                    # Keep -vv, -vvv as-is for argparse action='count'
-                    expanded.append(arg)
-                elif arg[2] in ['4', '5']:
-                    # Split -v5 into -v and -5, or -v4 into -v and -4
-                    expanded.append('-v')
-                    expanded.append('-' + arg[2:])
-                else:
-                    # It's something else, keep together
-                    expanded.append(arg)
-            elif len(arg) == 3 and arg[1] in ['4', '5', 'F', 'S', 'v'] and arg[2] in ['4', '5']:
-                # Handle -45, -54, -v4, -v5, etc.
-                expanded.append('-' + arg[1])
-                expanded.append('-' + arg[2])
-            else:
-                expanded.append(arg)
-        else:
-            expanded.append(arg)
-        i += 1
-    return expanded
+# Directory names (case-insensitive) to strip from output path when from dir, e.g. foo/DCIM/file.jpg -> foo/file.mp4
+STRIP_DIR_NAMES = ('webcam', 'auto-shoot', 'camera', 'b612', 'dcim', 'images', 'image', 'pictures', 'picture')
 
-def main():
-    # Expand combined short options before parsing
-    sys.argv = expand_combined_short_options(sys.argv)
-    
-    parser = argparse.ArgumentParser(
-        description='Convert image series to video with timecode as subtitle',
-        formatter_class=argparse.RawDescriptionHelpFormatter
-    )
-    
-    parser.add_argument('images', nargs='+', help='Input image files')
-    parser.add_argument('-g', '--resize', help='Resize images (default: 1080)')
-    parser.add_argument('-r', '--fps', type=float, default=29.97, help='Frame rate (default: 29.97)')
-    parser.add_argument('-o', '--output', help='Output file')
-    parser.add_argument('--crf', type=int, help='Constant rate factor')
-    parser.add_argument('-b', '--bandwidth', help='Bandwidth in bps (e.g., 4M)')
-    parser.add_argument('-4', '--h264', action='store_true', help='Use H.264 codec')
-    parser.add_argument('-5', '--h265', action='store_true', help='Use H.265 codec')
-    parser.add_argument('-T', '--theme', default='split', choices=['split', 'simple', 'large'],
-                       help='Subtitle theme (default: split)')
-    parser.add_argument('-t', '--sort-time', action='store_true',
-                       help='Sort by file modification time (or EXIF time if --exif specified) instead of filename')
-    parser.add_argument('-F', '--filetime', action='store_true',
-                       help='Use file modification time instead of EXIF')
-    parser.add_argument('-e', '--exif', default='DateTimeOriginal',
-                       help='EXIF field to use (default: DateTimeOriginal)')
-    parser.add_argument('-S', '--nosubsec', action='store_true',
-                       help='Ignore subsecond fields')
-    parser.add_argument('--timezone', default=None, help='Timezone offset (default: from system)')
-    parser.add_argument('-k', '--delete', action='store_true',
-                       help='Delete input image files after successful conversion')
-    parser.add_argument('-f', '--force', action='store_true',
-                       help='Overwrite existing output file without prompting')
-    parser.add_argument('-i', '--interactive', action='store_true',
-                       help='Prompt for confirmation before overwriting existing output file')
-    parser.add_argument('-q', '--quiet', action='count', default=0, help='Quiet mode (decrease loglevel, can be specified multiple times)')
-    parser.add_argument('-v', '--verbose', action='count', default=0, help='Verbose output (use -vv, -vvv for more)')
-    
-    args = parser.parse_args()
-    
-    # Set global logging state
-    # Base loglevel is 0 (_log1). Each -q decreases by 1, each -v increases by 1
-    # warn=-1, error=-2, fatal=-3, log1=0, log2=1, log3=2, log4=3
-    global _log_level
-    _log_level = args.quiet - args.verbose
-    
-    # Get timezone if not specified
-    if args.timezone is None:
-        args.timezone = get_system_timezone()
-    
-    # Handle directory arguments: if multiple args and some are directories,
-    # process each directory separately by recursively calling the script
-    if len(args.images) > 1:
-        # Separate directories from files
-        dirs = []
-        files = []
-        
-        for img_path in args.images:
-            if not os.path.exists(img_path):
-                _error(f"Path not found: {img_path}")
-                sys.exit(1)
-            
-            if os.path.isdir(img_path):
-                dirs.append(img_path)
-            else:
-                files.append(img_path)
-        
-        # If there are directories and multiple arguments, process each directory separately
-        if dirs:
-            # Build command line arguments (excluding the image arguments)
-            cmd_args = []
-            # Use absolute path to script
-            script_path = os.path.abspath(sys.argv[0])
-            
-            # Reconstruct all options (but not -o, as each directory gets its own output)
-            if args.resize:
-                cmd_args.extend(['-g', args.resize])
-            if args.fps != 29.97:
-                cmd_args.extend(['-r', str(args.fps)])
-            # Don't pass -o: each directory will get its own output beside the directory
-            if args.crf is not None:
-                cmd_args.extend(['--crf', str(args.crf)])
-            if args.bandwidth:
-                cmd_args.extend(['-b', args.bandwidth])
-            if args.h264:
-                cmd_args.append('-4')
-            if args.h265:
-                cmd_args.append('-5')
-            if args.theme != 'split':
-                cmd_args.extend(['-T', args.theme])
-            if args.sort_time:
-                cmd_args.append('-t')
-            if args.filetime:
-                cmd_args.append('-F')
-            if args.exif != 'DateTimeOriginal':
-                cmd_args.extend(['-e', args.exif])
-            if args.nosubsec:
-                cmd_args.append('-S')
-            if args.timezone:
-                cmd_args.extend(['--timezone', args.timezone])
-            if args.delete:
-                cmd_args.append('-k')
-            if args.force:
-                cmd_args.append('-f')
-            if args.interactive:
-                cmd_args.append('-i')
-            # Add quiet/verbose flags
-            for _ in range(args.quiet):
-                cmd_args.append('-q')
-            for _ in range(args.verbose):
-                cmd_args.append('-v')
-            
-            # Process each directory separately
-            for dir_path in dirs:
-                _log2(f"Processing directory separately: {dir_path}")
-                cmd = [sys.executable, script_path] + cmd_args + [dir_path]
-                result = subprocess.run(cmd)
-                if result.returncode != 0:
-                    _error(f"Failed to process directory: {dir_path}")
-                    sys.exit(result.returncode)
-            
-            # If there are remaining files, process them together
-            if files:
-                args.images = files
-            else:
-                # All arguments were directories, we're done
-                return
-    
-    # Collect input images (handle directories)
-    image_paths = []
-    first_arg_is_dir = False
-    first_dir_path = None
-    
-    for img_path in args.images:
-        if not os.path.exists(img_path):
-            _error(f"Path not found: {img_path}")
-            sys.exit(1)
-        
-        if os.path.isdir(img_path):
-            # Collect all images from directory
-            dir_images = collect_images_from_directory(img_path)
-            if not dir_images:
-                _warn(f"No image files found in directory: {img_path}")
-            else:
-                image_paths.extend(dir_images)
-                # Track if first argument is a directory
-                if len(image_paths) == len(dir_images):
-                    first_arg_is_dir = True
-                    first_dir_path = img_path
-        else:
-            # Regular file
-            image_paths.append(img_path)
-    
+def path_without_trailing_strip_dirs(path, strip_names):
+    """Remove trailing path components that match strip_names (case-insensitive). Return (effective_parent_path, was_stripped)."""
+    norm = os.path.normpath(os.path.abspath(path))
+    parts = Path(norm).parts
+    strip_set = {s.lower() for s in strip_names}
+    i = len(parts) - 1
+    while i >= 0 and parts[i].lower() in strip_set:
+        i -= 1
+    if i < 0:
+        effective = os.curdir
+    else:
+        effective = os.path.join(*parts[:i + 1]) if parts[:i + 1] else os.curdir
+    was_stripped = (i + 1) < len(parts)
+    return effective, was_stripped
+
+def remove_empty_parents(deleted_dirs):
+    """Remove empty directories and their empty parents as far up as possible."""
+    for dir_path in sorted(deleted_dirs, key=lambda p: -len(Path(p).parts)):
+        try:
+            if os.path.isdir(dir_path):
+                if not os.listdir(dir_path):
+                    os.rmdir(dir_path)
+                    _log2(f"Removed empty directory: {dir_path}")
+                    parent = os.path.dirname(os.path.abspath(dir_path))
+                    while parent and parent != dir_path and os.path.isdir(parent):
+                        if os.listdir(parent):
+                            break
+                        try:
+                            os.rmdir(parent)
+                            _log2(f"Removed empty directory: {parent}")
+                            parent = os.path.dirname(parent)
+                        except Exception:
+                            break
+        except Exception as e:
+            _log3(f"Could not remove directory {dir_path}: {e}")
+
+def mkvideo_from_dir(args, dir_path):
+    """Create one video from all images in a directory; if -k, remove empty parents after delete."""
+    image_paths = collect_images_from_directory(dir_path)
     if not image_paths:
-        _error("No image files found")
-        sys.exit(1)
-    
+        _warn(f"No image files found in directory: {dir_path}")
+        return
+    # Strip trailing path components in STRIP_DIR_NAMES (e.g. foo/DCIM/file.jpg -> foo/file.mp4)
+    effective_parent, was_stripped = path_without_trailing_strip_dirs(dir_path, STRIP_DIR_NAMES)
+    if was_stripped:
+        first_basename = Path(image_paths[0]).stem
+        output_path = os.path.join(effective_parent, f"{first_basename}.mp4")
+    else:
+        output_path = None
+    mkvideo_from_files(args, image_paths, output_path=output_path, from_dir=dir_path if output_path is None else None, delete_after=args.delete)
+    if args.delete:
+        remove_empty_parents([dir_path])
+
+def mkvideo_from_files(args, image_paths, output_path=None, from_dir=None, delete_after=False):
+    """Create one video from a list of image paths. Optionally delete files afterward (no rmdir)."""
+    if not image_paths:
+        return
     # Sort images
     if args.sort_time:
         # Sort by timestamp (EXIF if --exif specified, else file mtime)
@@ -698,13 +566,13 @@ def main():
         image_paths.sort(key=lambda x: natural_sort_key(os.path.basename(x)))
     
     # Determine output file
-    if args.output:
+    if output_path is None and args.output:
         output_path = args.output
-    else:
-        if first_arg_is_dir and first_dir_path:
-            # When first arg is directory, place output beside the directory
-            dir_name = os.path.basename(os.path.abspath(first_dir_path))
-            dir_parent = os.path.dirname(os.path.abspath(first_dir_path))
+    if output_path is None:
+        if from_dir is not None:
+            norm = os.path.normpath(os.path.abspath(from_dir))
+            dir_name = os.path.basename(norm)
+            dir_parent = os.path.dirname(norm)
             output_path = os.path.join(dir_parent, f"{dir_name}.mp4")
         else:
             # Use first image name with .mp4 extension
@@ -966,38 +834,126 @@ def main():
             _log3("exiftool not found, skipping EXIF metadata copy")
         
         # Delete input images if requested
-        if args.delete:
+        if delete_after:
             _log1(f"Deleting {len(image_paths)} input image files...")
-            deleted_dirs = set()
             for img_path in image_paths:
                 try:
                     if os.path.exists(img_path):
-                        img_dir = os.path.dirname(os.path.abspath(img_path))
                         os.unlink(img_path)
                         _log2(f"Deleted: {img_path}")
-                        deleted_dirs.add(img_dir)
                 except Exception as e:
                     _warn(f"Could not delete {img_path}: {e}")
-            
-            # Remove empty directories
-            for dir_path in deleted_dirs:
-                try:
-                    if os.path.isdir(dir_path):
-                        # Check if directory is empty (only . and ..)
-                        if not os.listdir(dir_path):
-                            os.rmdir(dir_path)
-                            _log2(f"Removed empty directory: {dir_path}")
-                except Exception as e:
-                    _log3(f"Could not remove directory {dir_path}: {e}")
-        
     finally:
         # Clean up temp files
         if os.path.exists(subtitle_file):
             os.unlink(subtitle_file)
-        # Clean up work directory
-        if 'workdir' in locals() and os.path.exists(workdir):
+        if os.path.exists(workdir):
             shutil.rmtree(workdir)
-            _log3(f"Cleaned up temporary directory: {workdir}")
+
+def expand_combined_short_options(argv):
+    """Expand combined short options like -v5 to -v -5."""
+    expanded = []
+    i = 0
+    while i < len(argv):
+        arg = argv[i]
+        # Check if it's a short option that can be combined (not --long-option)
+        if arg.startswith('-') and len(arg) > 2 and arg[1] != '-':
+            # Options that are flags (can be combined): -4, -5, -F, -S, -v
+            # Options that take values (cannot be combined): -g, -r, -o, -b, -e, -t
+            # Handle combinations like -v5, -v4, -45, etc.
+            # Note: -vv and -vvv are handled by argparse's action='count', so we don't expand them
+            if arg.startswith('-v') and len(arg) > 2:
+                # Check if it's -vv, -vvv, etc. (multiple v's for verbose)
+                # argparse with action='count' handles these automatically
+                if all(c == 'v' for c in arg[2:]):
+                    # Keep -vv, -vvv as-is for argparse action='count'
+                    expanded.append(arg)
+                elif arg[2] in ['4', '5']:
+                    # Split -v5 into -v and -5, or -v4 into -v and -4
+                    expanded.append('-v')
+                    expanded.append('-' + arg[2:])
+                else:
+                    # It's something else, keep together
+                    expanded.append(arg)
+            elif len(arg) == 3 and arg[1] in ['4', '5', 'F', 'S', 'v'] and arg[2] in ['4', '5']:
+                # Handle -45, -54, -v4, -v5, etc.
+                expanded.append('-' + arg[1])
+                expanded.append('-' + arg[2])
+            else:
+                expanded.append(arg)
+        else:
+            expanded.append(arg)
+        i += 1
+    return expanded
+
+def main():
+    # Expand combined short options before parsing
+    sys.argv = expand_combined_short_options(sys.argv)
+    
+    parser = argparse.ArgumentParser(
+        description='Convert image series to video with timecode as subtitle',
+        formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    
+    parser.add_argument('images', nargs='+', help='Input image files')
+    parser.add_argument('-g', '--resize', help='Resize images (default: 1080)')
+    parser.add_argument('-r', '--fps', type=float, default=29.97, help='Frame rate (default: 29.97)')
+    parser.add_argument('-o', '--output', help='Output file')
+    parser.add_argument('--crf', type=int, help='Constant rate factor')
+    parser.add_argument('-b', '--bandwidth', help='Bandwidth in bps (e.g., 4M)')
+    parser.add_argument('-4', '--h264', action='store_true', help='Use H.264 codec')
+    parser.add_argument('-5', '--h265', action='store_true', help='Use H.265 codec')
+    parser.add_argument('-T', '--theme', default='split', choices=['split', 'simple', 'large'],
+                       help='Subtitle theme (default: split)')
+    parser.add_argument('-t', '--sort-time', action='store_true',
+                       help='Sort by file modification time (or EXIF time if --exif specified) instead of filename')
+    parser.add_argument('-F', '--filetime', action='store_true',
+                       help='Use file modification time instead of EXIF')
+    parser.add_argument('-e', '--exif', default='DateTimeOriginal',
+                       help='EXIF field to use (default: DateTimeOriginal)')
+    parser.add_argument('-S', '--nosubsec', action='store_true',
+                       help='Ignore subsecond fields')
+    parser.add_argument('--timezone', default=None, help='Timezone offset (default: from system)')
+    parser.add_argument('-k', '--delete', action='store_true',
+                       help='Delete input image files after successful conversion')
+    parser.add_argument('-f', '--force', action='store_true',
+                       help='Overwrite existing output file without prompting')
+    parser.add_argument('-i', '--interactive', action='store_true',
+                       help='Prompt for confirmation before overwriting existing output file')
+    parser.add_argument('-q', '--quiet', action='count', default=0, help='Quiet mode (decrease loglevel, can be specified multiple times)')
+    parser.add_argument('-v', '--verbose', action='count', default=0, help='Verbose output (use -vv, -vvv for more)')
+    
+    args = parser.parse_args()
+    
+    # Set global logging state
+    # Base loglevel is 0 (_log1). Each -q decreases by 1, each -v increases by 1
+    # warn=-1, error=-2, fatal=-3, log1=0, log2=1, log3=2, log4=3
+    global _log_level
+    _log_level = args.quiet - args.verbose
+    
+    # Get timezone if not specified
+    if args.timezone is None:
+        args.timezone = get_system_timezone()
+    
+    # Separate directory and file arguments
+    dirs = []
+    files = []
+    for path in args.images:
+        if not os.path.exists(path):
+            _error(f"Path not found: {path}")
+            sys.exit(1)
+        if os.path.isdir(path):
+            dirs.append(path)
+        else:
+            files.append(path)
+
+    # One video per directory
+    for dir_path in dirs:
+        mkvideo_from_dir(args, dir_path)
+
+    # One video for all remaining file arguments
+    if files:
+        mkvideo_from_files(args, files, output_path=args.output, from_dir=None, delete_after=args.delete)
 
 if __name__ == '__main__':
     main()

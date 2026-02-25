@@ -1,4 +1,4 @@
-.TH IMG2MP4 1 "2024-12-18" "img2mp4 1.0.0" "User Commands"
+.TH IMG2MP4 1 "2025-02-25" "img2mp4 1.0.1" "User Commands"
 .SH NAME
 img2mp4 \- Convert image series to video with timecode as subtitle
 .SH SYNOPSIS
@@ -8,15 +8,27 @@ img2mp4 \- Convert image series to video with timecode as subtitle
 \fBimg2mp4\fR converts a series of images into a video file with timecode
 subtitles extracted from EXIF data or file modification times.
 .PP
-If a directory is specified, all image files in that directory will be used,
-sorted in version order (natural sort). This correctly handles mixed text/numbers,
-ordering file-1.9 before file-1.10, file9a before file10a, etc.
+\fBDirectories\fR: One video is created per directory. Images in each directory
+are collected and sorted (natural sort or by time with \fB\-t\fR). Output is
+placed beside the directory, or beside the logical parent when the path ends
+with certain names (see \fBOutput path\fR below).
 .PP
-When the first argument is a directory, the output video will be placed beside
-the directory (not inside it).
+\fBFiles\fR: All file arguments are combined into a single video. Default output
+is derived from the first image path; use \fB\-o\fR to set the output file.
+.PP
+\fBMixed\fR: You can pass both directories and files; each directory produces
+one video, and all files together produce one video (e.g.\&
+\fBimg2mp4 dir1/ dir2/ a.jpg b.jpg\fR produces three videos).
 .PP
 The tool supports multiple subtitle themes, configurable encoding options,
 and automatic timezone detection.
+.SH OUTPUT PATH
+When the input is a directory, certain trailing path components (case-insensitive)
+are stripped so the video is written next to the logical parent. Stripped names:
+\fBWebcam\fR, \fBauto-shoot\fR, \fBcamera\fR, \fBB612\fR, \fBDCIM\fR, \fBIMAGES\fR.
+The output filename is then the first image basename (e.g.\& \fB2025-01-15 12-30-45.mp4\fR).
+Example: directory \fBfoo/DCIM\fR with \fBfilename1.jpg\fR yields \fBfoo/filename1.mp4\fR.
+Otherwise output is \fIdir_parent\fR/\fIdir_name\fR\fB.mp4\fR.
 .SH OPTIONS
 .TP
 \fB\-g\fR, \fB\-\-resize\fR \fISIZE\fR[\fIW\fR|\fIWxH\fR|\fIW*H\fR][\fITYPE\fR]
@@ -63,8 +75,10 @@ Ignore subsecond fields (default: included)
 Timezone offset (default: auto-detected from system)
 .TP
 \fB\-k\fR, \fB\-\-delete\fR
-Delete input image files after successful conversion. If a directory becomes
-empty after deletion, it will also be removed.
+Delete input image files after successful conversion. When processing
+directories, empty directories (and their empty parents) are removed as far
+up as possible; when processing only files, only the image files are deleted
+(no directory removal).
 .TP
 \fB\-f\fR, \fB\-\-force\fR
 Overwrite existing output file without prompting. By default, the tool will
@@ -175,9 +189,14 @@ img2mp4 -t -e DateTimeOriginal *.jpg
 img2mp4 -g 4kp -b 25M *.jpg
 .RE
 .TP
-Process all images in a directory:
+Process all images in a directory (one video per directory):
 .RS
 img2mp4 /path/to/images/
+.RE
+.TP
+Process multiple directories and optional files:
+.RS
+img2mp4 dir1/ dir2/ extra1.jpg extra2.jpg
 .RE
 .TP
 Process directory and delete source images after conversion:
@@ -227,7 +246,7 @@ Lenik <debian@bodz.net>
 .SH BUGS
 Report bugs at https://github.com/lenik/img2mp4/issues
 .SH COPYRIGHT
-Copyright \(co 2024 Lenik
+Copyright \(co 2024\-2025 Lenik
 .br
 License: GPL-3.0-or-later
 

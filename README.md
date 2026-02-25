@@ -39,9 +39,15 @@ sudo dpkg -i ../img2mp4_*.deb
 img2mp4 [OPTIONS] IMAGE... [DIRECTORY...]
 ```
 
-If a directory is specified, all image files in that directory will be used, sorted in version order (natural sort). This correctly handles mixed text/numbers, ordering file-1.9 before file-1.10, file9a before file10a, etc.
+- **Directories**: One video is created per directory. Images in each directory are collected and sorted (natural sort or by time with `-t`). Output is placed beside the directory (or, if the path ends with certain names, beside the parent; see *Output path and strip dirs* below).
+- **Files**: All file arguments are combined into a single video. Default output is derived from the first image path; use `-o` to set the output file.
+- **Mixed**: You can pass both directories and files; each directory produces one video, and all files together produce one video (e.g. `img2mp4 dir1/ dir2/ a.jpg b.jpg` → three videos).
 
-When the first argument is a directory, the output video will be placed beside the directory (not inside it).
+When the first argument is a directory, the output video will be placed beside the directory (not inside it), unless the path ends with one of the strip dir names below.
+
+### Output path and strip dirs
+
+When the input is a directory, certain trailing path components (case-insensitive) are removed from the output path so the video is written next to the “logical” parent. Removed names: `Webcam`, `auto-shoot`, `camera`, `B612`, `DCIM`, `IMAGES`. The output filename is then the first image’s basename (e.g. `2025-01-15 12-30-45.mp4`). Example: `foo/DCIM/filename1.jpg` (directory `foo/DCIM`) → `foo/filename1.mp4`.
 
 ### Options
 
@@ -58,7 +64,7 @@ When the first argument is a directory, the output video will be placed beside t
 - `-e, --exif FIELD`: Use specific EXIF field, `DateTimeOriginal` by default
 - `-S, --nosubsec`: Ignore subsecond fields (default: included)
 - `--timezone OFFSET`: Timezone offset (default: auto-detected from system)
-- `-k, --delete`: Delete input image files after successful conversion
+- `-k, --delete`: Delete input image files after successful conversion. When processing directories, empty directories (and their empty parents) are removed as far up as possible; when processing only files, only the image files are deleted (no directory removal).
 - `-f, --force`: Overwrite existing output file without prompting
 - `-i, --interactive`: Prompt for confirmation before overwriting existing output file
 - `-q, --quiet`: Quiet mode (decrease loglevel, can be specified multiple times)
@@ -127,10 +133,13 @@ img2mp4 -t -e DateTimeOriginal *.jpg
 # 4K output with specific bandwidth
 img2mp4 -g 4kp -b 25M *.jpg
 
-# Process all images in a directory
+# Process all images in a directory (one video per directory)
 img2mp4 /path/to/images/
 
-# Process directory and delete source images after conversion
+# Process multiple directories and optional files (one video per dir, one for all files)
+img2mp4 dir1/ dir2/ extra1.jpg extra2.jpg
+
+# Process directory and delete source images after conversion (-k also removes empty dirs)
 img2mp4 -k /path/to/images/
 
 # Overwrite existing output file without prompting

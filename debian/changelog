@@ -1,4 +1,14 @@
-img2mp4 (1.0.0-1) stable; urgency=medium
+img2mp4 (1.0.1) stable; urgency=medium
+
+  * One video per directory, one video for all file args; refactor to
+    mkvideo_from_dir and mkvideo_from_files (Python and Bash)
+  * Strip dir names from output path (Webcam, auto-shoot, camera, B612,
+    DCIM, IMAGES, case-insensitive), e.g. foo/DCIM/file.jpg -> foo/file.mp4
+  * With -k, remove empty parent dirs when processing directories only
+
+ -- Lenik (谢继雷) <lenik@bodz.net>  Wed, 25 Feb 2025 00:00:00 +0000
+
+img2mp4 (1.0.0) stable; urgency=medium
 
   * Initial release
   * Convert image series to video with timecode subtitles
